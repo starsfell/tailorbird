@@ -20,7 +20,7 @@ BURST_GAP_SECONDS = 2.0
 PHASH_HAMMING_THRESHOLD = 8
 
 # Skill level presets: sharpness (raw, eye/head area) + aesthetics thresholds
-# Thresholds are calibrated against birdye's own sharpness_score scale
+# Thresholds are calibrated against tailorbird's own sharpness_score scale
 # (Laplacian+Tenengrad sqrt-scaled, typical real-photo range 0-80).
 SKILL_PRESETS = {
     "beginner":     {"sharpness_th": 22.0, "aesthetics_th": 4.5, "min_sharpness":  8.0, "min_aesthetics": 3.5},

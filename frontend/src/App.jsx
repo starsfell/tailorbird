@@ -201,6 +201,19 @@ export default function App() {
     setCompare(prev => prev ? prev.filter(s => s.primary_id !== shot.primary_id) : null)
   }
 
+  const handleCompareRemove = (shot) => {
+    setCompare(prev => {
+      if (!prev) return null
+      const next = prev.filter(s => s.primary_id !== shot.primary_id)
+      return next.length < 2 ? null : next
+    })
+    setSelected(prev => {
+      const next = new Set(prev)
+      next.delete(shot.primary_id)
+      return next
+    })
+  }
+
   return (
     <div className="app">
       <div className="topbar">
@@ -321,6 +334,34 @@ export default function App() {
                   在 Finder 中打开
                 </button>
               </div>
+              <div className="row">
+                <button
+                  className="danger"
+                  style={{width:'100%'}}
+                  disabled={!folder || !subfolderName.trim()}
+                  onClick={async () => {
+                    try {
+                      const { matches } = await api.findMoveTarget(folder, subfolderName.trim())
+                      const total = (matches || []).reduce((n, m) => n + (m.file_count || 0), 0)
+                      if (total === 0) {
+                        alert(`「${subfolderName}」里没有文件`)
+                        return
+                      }
+                      const ok = window.confirm(
+                        `把所有「${subfolderName}」子文件夹里的 ${total} 个文件送入废纸篓?\n` +
+                        `(可在系统废纸篓里恢复)`
+                      )
+                      if (!ok) return
+                      const r = await api.emptyMoveTarget(folder, subfolderName.trim())
+                      const failed = r.failed?.length || 0
+                      alert(`已移入废纸篓 ${r.trashed_count} 个文件` + (failed ? `,失败 ${failed} 个` : ''))
+                    } catch (e) { alert('清空失败: ' + e.message) }
+                  }}
+                  title={`把所有 ${subfolderName}/ 里的文件送入系统废纸篓`}
+                >
+                  清空 {subfolderName} 到废纸篓
+                </button>
+              </div>
             </>
           )}
           <div className="row">
@@ -373,7 +414,7 @@ export default function App() {
       </div>
 
       {detail && <DetailView shots={detail.list} startIndex={detail.index} onClose={() => setDetail(null)} onDelete={handleDetailDelete} onRefresh={refreshShots} />}
-      {compare && <Compare shots={compare} onClose={() => setCompare(null)} onDelete={handleCompareDelete} />}
+      {compare && <Compare shots={compare} onClose={() => setCompare(null)} onDelete={handleCompareDelete} onRemove={handleCompareRemove} />}
     </div>
   )
 }

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# birdye 一键启动: 后端 + 前端 + 自动开浏览器
+# tailorbird 一键启动: 后端 + 前端 + 自动开浏览器
 set -e
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

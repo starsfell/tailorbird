@@ -18,7 +18,7 @@ const COMPARE_SOURCE_PX = 6400
 //
 // S (or the button) disables linkage entirely; in that mode each photo is on
 // its own (still fit-to-cell initially).
-export function Compare({ shots, onClose, onDelete }) {
+export function Compare({ shots, onClose, onDelete, onRemove }) {
   const [linked, setLinked] = useState(true)
   const [shared, setShared] = useState({ scale: ZOOM_DEFAULT, offsetX: 0, offsetY: 0 })
   const [bases, setBases] = useState({})
@@ -122,7 +122,10 @@ export function Compare({ shots, onClose, onDelete }) {
                 <span style={{color:'var(--muted)', fontVariantNumeric:'tabular-nums'}}>
                   {eye ? `眼${eye}` : `主${subj}`}
                 </span>
-                <button onClick={() => onDelete?.(s)} className="danger" style={{padding:'2px 8px'}}>删</button>
+                <span style={{display:'flex', gap:6}}>
+                  <button onClick={() => onRemove?.(s)} style={{padding:'2px 8px'}} title="从对比中移出(不删文件)">移出对比</button>
+                  <button onClick={() => onDelete?.(s)} className="danger" style={{padding:'2px 8px'}}>删</button>
+                </span>
               </div>
               <PanZoom
                 src={api.fullUrl(s.primary_id, COMPARE_SOURCE_PX)}

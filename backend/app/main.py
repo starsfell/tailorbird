@@ -27,7 +27,7 @@ from app.core.scanner import ScanProgress, scan_folder
 from app.db.schema import init_db, tx
 
 
-app = FastAPI(title="birdye", version="0.1.0")
+app = FastAPI(title="tailorbird", version="0.1.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -388,7 +388,7 @@ class WriteXmpReq(BaseModel):
 
 @app.post("/api/exif/write")
 def exif_write(req: WriteXmpReq) -> dict:
-    """Write birdye's rating/label to original files (XMP, in-place)."""
+    """Write tailorbird's rating/label to original files (XMP, in-place)."""
     return write_xmp(req.photo_ids)
 
 
@@ -608,6 +608,64 @@ def find_move_target(folder: str = Query(...), name: str = Query("ToReview")) ->
             matches.append({"path": str(p), "file_count": file_count, "mtime": mtime})
     matches.sort(key=lambda m: m["mtime"], reverse=True)
     return {"matches": matches}
+
+
+class EmptyMoveTargetReq(BaseModel):
+    folder: str
+    name: str = "ToReview"
+    remove_empty_dirs: bool = True
+
+
+@app.post("/api/empty-move-target")
+def empty_move_target(req: EmptyMoveTargetReq) -> dict:
+    """Send every file inside <folder>/**/{name}/ to system trash.
+
+    Use case: user has reviewed the ToReview subfolders in Finder and wants to
+    permanently discard them in one click. Files go to system trash (recoverable),
+    not direct rm.
+    """
+    from send2trash import send2trash
+
+    root = Path(_normalize(req.folder) or "")
+    if not root.exists() or not root.is_dir():
+        raise HTTPException(404, f"folder not found: {root}")
+    # Safety: only operate inside scanned folders
+    with tx() as conn:
+        ok = conn.execute(
+            "SELECT 1 FROM folders WHERE ? LIKE path || '%'", (str(root),)
+        ).fetchone()
+    if not ok:
+        raise HTTPException(403, "folder is outside any scanned folder")
+
+    trashed: list[str] = []
+    failed: list[dict] = []
+    emptied_dirs: list[str] = []
+
+    for sub in root.rglob(req.name):
+        if not sub.is_dir():
+            continue
+        for f in sub.iterdir():
+            if not f.is_file():
+                continue
+            try:
+                send2trash(str(f))
+                trashed.append(str(f))
+            except Exception as e:
+                failed.append({"path": str(f), "error": f"{type(e).__name__}: {e}"})
+        if req.remove_empty_dirs:
+            try:
+                if not any(sub.iterdir()):
+                    sub.rmdir()
+                    emptied_dirs.append(str(sub))
+            except OSError:
+                pass
+
+    return {
+        "trashed_count": len(trashed),
+        "trashed": trashed,
+        "failed": failed,
+        "emptied_dirs": emptied_dirs,
+    }
 
 
 class RecomputeReq(BaseModel):

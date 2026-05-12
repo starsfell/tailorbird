@@ -1,4 +1,4 @@
-"""Write birdye's rating / pick / labels back to original RAW/JPEG via exiftool.
+"""Write tailorbird's rating / pick / labels back to original RAW/JPEG via exiftool.
 
 Compatible with Lightroom / Capture One / Bridge XMP conventions:
 - XMP:Rating  (1-5 integer; we use 0-3)
@@ -27,7 +27,7 @@ def write_xmp(photo_ids: Iterable[int]) -> dict:
     """For each photo, write rating + label into its XMP block. Original file is
     modified IN PLACE; exiftool keeps a `_original` backup unless we pass
     `-overwrite_original`. We use `-overwrite_original` to avoid littering the
-    folder with .ARW_original duplicates, since birdye's DB is the audit trail."""
+    folder with .ARW_original duplicates, since tailorbird's DB is the audit trail."""
     photo_ids = list(photo_ids)
     if not photo_ids:
         return {"updated": [], "failed": []}
@@ -56,7 +56,8 @@ def write_xmp(photo_ids: Iterable[int]) -> dict:
             args.append(f"-XMP:Label={label}")
         else:
             args.append("-XMP:Label=")
-        # Mark as processed by birdye for round-trip recognition
+        # Mark with CreatorTool=birdye (legacy name, kept stable so old XMP
+        # written before the rename can still be recognized and cleared).
         args.append("-XMP:CreatorTool=birdye")
         args.append(str(p))
         try:
@@ -72,7 +73,7 @@ def write_xmp(photo_ids: Iterable[int]) -> dict:
 
 
 def clear_xmp(photo_ids: Iterable[int]) -> dict:
-    """Undo: clear rating/label written by birdye."""
+    """Undo: clear rating/label written by tailorbird."""
     photo_ids = list(photo_ids)
     if not photo_ids:
         return {"cleared": [], "failed": []}

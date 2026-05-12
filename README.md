@@ -1,4 +1,4 @@
-# birdye
+# tailorbird
 
 本地运行的网页端鸟摄照片筛选工具。Sony A7R5 优化(ARW + HIF 双格式),也支持 NEF / CR2 / CR3 / RAF / ORF / RW2 / DNG / HEIF / JPEG。
 
@@ -32,7 +32,7 @@
 
 ## 项目目标
 
-Sony A7R5 一次连拍下来动辄上千张 ARW + HIF。后期最耗时的不是修图,而是**从一千张里挑出眼睛锐的那几张**。birdye 把这件事自动化:
+Sony A7R5 一次连拍下来动辄上千张 ARW + HIF。后期最耗时的不是修图,而是**从一千张里挑出眼睛锐的那几张**。tailorbird 把这件事自动化:
 
 1. **抽预览不解 RAW** — 直接读 ARW 内嵌的全分辨率 JPEG,处理速度跟 JPEG 一样快;
 2. **多模型协同打分** — YOLO 找鸟、关键点找眼、TOPIQ 算美学、SuperFlier 识飞鸟、直方图判过/欠曝;
@@ -113,9 +113,9 @@ if rating == 3:  锐度 + 美学 + 焦点 + 眼可见度全 OK
 pick = 1 ⇔ rating == 3 且分数在所有 3 星中位于 top 25%
 ```
 
-锐度尺度是 birdye 自己的混合度量:`sqrt(Laplacian) * 0.6 + sqrt(Tenengrad) * 1.2`,典型鸟片范围 5–80。这个度量对鸟眼这种细节高频区域更敏感,胜过单一 Laplacian。
+锐度尺度是 tailorbird 自己的混合度量:`sqrt(Laplacian) * 0.6 + sqrt(Tenengrad) * 1.2`,典型鸟片范围 5–80。这个度量对鸟眼这种细节高频区域更敏感,胜过单一 Laplacian。
 
-`focus_weight` 反映相机 AF 点离鸟眼的远近 —— 是 birdye 跟 SuperPicky 评分逻辑的核心一致点,也是「相机说对焦在眼上 vs 实际拍出来眼模糊」的判别依据。
+`focus_weight` 反映相机 AF 点离鸟眼的远近 —— 是 tailorbird 跟 SuperPicky 评分逻辑的核心一致点,也是「相机说对焦在眼上 vs 实际拍出来眼模糊」的判别依据。
 
 ---
 
@@ -154,7 +154,7 @@ pick = 1 ⇔ rating == 3 且分数在所有 3 星中位于 top 25%
 ./scripts/start.sh
 
 # 或分别启动两个进程
-conda activate birdye
+conda activate birdye  # conda env 名沿用旧名,见下方说明
 cd backend && PYTHONPATH=. uvicorn app.main:app --port 7891   # 终端 1
 cd frontend && npm run dev                                     # 终端 2
 ```
@@ -199,7 +199,7 @@ cd frontend && npm run dev                                     # 终端 2
 ## 项目结构
 
 ```
-birdye/
+tailorbird/
 ├── backend/                         Python 3.11 + FastAPI
 │   ├── app/
 │   │   ├── main.py                  REST API (扫描 / 列表 / 删除 / EXIF 写)
@@ -395,20 +395,20 @@ sqlite3 data/birdye.db "SELECT rating, COUNT(*) FROM photos WHERE deleted_at IS 
 
 ## 与 SuperPicky.APP 的关系
 
-birdye 在功能设计和模型选型上**借鉴**了开源项目 [SuperPicky.APP (GPL-3.0)](https://github.com/jamesphotography/SuperPicky),包括:
+tailorbird 在功能设计和模型选型上**借鉴**了开源项目 [SuperPicky.APP (GPL-3.0)](https://github.com/jamesphotography/SuperPicky),包括:
 
 - 0-3 星评分公式骨架
 - YOLO11 + CUB-200 keypoint + TOPIQ + SuperFlier 的模型组合
 - Sony / Nikon / Canon / Fuji / Olympus / Panasonic 的 AF 点 EXIF 字段名
 
-birdye 的所有 Python / JS 代码均独立编写,**不复制 SuperPicky 源码**,只在权重文件层面复用 HF 上的开源 checkpoint。模型权重各自遵循原始发布方协议。
+tailorbird 的所有 Python / JS 代码均独立编写,**不复制 SuperPicky 源码**,只在权重文件层面复用 HF 上的开源 checkpoint。模型权重各自遵循原始发布方协议。
 
 ---
 
 ## 平台与依赖
 
 - macOS Apple Silicon(M1 / M2 / M3 / M4),走 PyTorch MPS 加速
-- Python 3.11(conda env 名:`birdye`)
+- Python 3.11(conda env 名沿用旧名 `birdye` —— 改名为 tailorbird 时为了不重建环境保留)
 - Node.js 18+
 - `brew install exiftool`
 - 主要 Python 依赖:`torch` / `torchvision` / `ultralytics` / `pyiqa` / `rawpy` / `pillow-heif` / `opencv-python` / `imagehash` / `fastapi` / `uvicorn` / `send2trash` / `pyexiftool` / `huggingface_hub` / `timm`

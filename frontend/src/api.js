@@ -51,6 +51,11 @@ export const api = {
     const qs = new URLSearchParams({ folder, name })
     return req('/api/find-move-target?' + qs.toString())
   },
+  emptyMoveTarget: (folder, name = 'ToReview') =>
+    req('/api/empty-move-target', {
+      method: 'POST',
+      body: JSON.stringify({ folder, name, remove_empty_dirs: true }),
+    }),
   annotate: (photo_id, bird_bbox, eye_xy) =>
     req('/api/annotate', { method: 'POST', body: JSON.stringify({ photo_id, bird_bbox, eye_xy }) }),
   similarGroups: (folder, threshold = 24) => {
