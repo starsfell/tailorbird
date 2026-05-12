@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+
+# Node / frontend build
+node_modules/
+dist/
+.vite/
+
+# OS
+.DS_Store
+
+# Local Claude Code workspace
+.claude/
+
+# User-private design notes
+prompts.txt
+
+# Runtime data (databases, caches, logs, downloaded model weights)
+data/*.db
+data/*.db-shm
+data/*.db-wal
+data/*.log
+data/thumbs/
+data/cache/
+data/medium/
+data/models/
+
+# Loose model weights at repo root (should live in data/models/)
+*.pt
+*.pth
+*.onnx
