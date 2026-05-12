@@ -134,6 +134,11 @@ def similar_groups(folder: Optional[str] = None, threshold: int = 16) -> dict:
     if not row:
         return {"groups": [], "threshold": threshold}
     raw_groups = find_similar_groups(row["id"], threshold)
+    import json as _json
+    def _maybe_json(v):
+        if not v: return None
+        try: return _json.loads(v)
+        except Exception: return None
     out_groups = []
     for g in raw_groups:
         items = []
@@ -149,6 +154,8 @@ def similar_groups(folder: Optional[str] = None, threshold: int = 16) -> dict:
                 "eye_sharpness": s["eye_sharp"],
                 "aesthetic_score": s["aes"],
                 "bird_confidence": s["conf"],
+                "bird_bbox": _maybe_json(s.get("bird_bbox")),
+                "eye_xy": _maybe_json(s.get("eye_xy")),
                 "rating": s["rating"],
                 "pick": bool(s["pick"]),
                 "is_flying": bool(s["is_flying"]),
@@ -217,6 +224,8 @@ def list_shots(
             MAX(eye_sharpness) AS eye_sharpness,
             MAX(aesthetic_score) AS aesthetic_score,
             MAX(bird_confidence) AS bird_confidence,
+            MAX(bird_bbox) AS bird_bbox,
+            MAX(eye_xy) AS eye_xy,
             MAX(rating) AS rating,
             MAX(pick) AS pick,
             MAX(is_flying) AS is_flying,
@@ -254,6 +263,11 @@ def list_shots(
                 continue
             if only_cluster_best and not d["is_cluster_best"]:
                 continue
+            import json as _json
+            def _maybe_json(v):
+                if not v: return None
+                try: return _json.loads(v)
+                except Exception: return None
             items.append(
                 {
                     "primary_id": primary_id,
@@ -265,6 +279,8 @@ def list_shots(
                     "eye_sharpness": d["eye_sharpness"],
                     "aesthetic_score": d["aesthetic_score"],
                     "bird_confidence": d["bird_confidence"],
+                    "bird_bbox": _maybe_json(d["bird_bbox"]),
+                    "eye_xy": _maybe_json(d["eye_xy"]),
                     "rating": d["rating"],
                     "pick": bool(d["pick"]),
                     "is_flying": bool(d["is_flying"]),

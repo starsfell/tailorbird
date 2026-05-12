@@ -85,9 +85,14 @@ Sony A7R5 一次连拍下来动辄上千张 ARW + HIF。后期最耗时的不是
 - 滚轮缩放 / 拖动平移 / 双击切换 100% / J / K / ← / → 翻图
 - 红框 = 相机记录的 AF 焦点
 - 绿框 = YOLO 检测的鸟主体
-- 黄点 = AI 推测的鸟眼位置(可手动拖动覆盖,影响打分)
+- 黄点 = AI 推测的鸟眼位置
+- 头部「手动标注」按钮:进入标注模式 → 拖动画鸟框 → 点击鸟眼位置 → 保存。后端立刻重算 `subject_sharpness` / `eye_sharpness` / `focus_weight` / `rating`,并同步到 ARW+HIF 同组所有文件。用于挽救 AI 漏检的鸟。
 
-**多图对比(C 键)**:选 2–9 张,默认同步缩放/平移(便于「找哪张眼最锐」),S 切换独立模式。
+**多图对比(C 键)**:选 2–9 张:
+- 默认**全部联动** — 所有图共享 500% 缩放和平移,锚点优先级: 鸟眼 > 鸟框中心 > 图心
+- 拖任意一张所有图同步移动;滚轮缩放所有图同步缩放,每张围绕自己的锚点
+- 源像素 6400px,在 Retina 屏 500% 下接近 1:1 像素
+- **S** 一次切换联动 / 独立 · **0** 重置到初始 · **Esc** 关闭 · 单元格里的「删」按钮可即时丢弃
 
 ---
 
@@ -183,7 +188,8 @@ cd frontend && npm run dev                                     # 终端 2
 |---|---|
 | 扫描 + 抽预览 + 清晰度 + pHash | ~4 张 / 秒(多线程) |
 | AI 全流程(单张 shot) | ~1.5 秒(YOLO 0.3s + 眼 0.02s + TOPIQ 0.65s + 飞 0.3s + 曝光 0.05s) |
-| 详情视图打开 | ~50 ms(ARW 实时抽 JPEG 预览) |
+| 详情视图打开 | ~50 ms(ARW 实时抽 JPEG 预览,无磁盘缓存) |
+| 对比视图打开(9 张 6400px) | ~1-2 秒(并行解码) |
 | 二次扫描同目录 | 秒开(SQLite 缓存) |
 
 **1000 张 ARW 全流程预估**:扫描 2–3 分钟 + AI 25 分钟,后续筛选 / 删除均为秒级。
@@ -232,7 +238,6 @@ birdye/
 ├── data/                            运行时数据(不入 git)
 │   ├── birdye.db                    SQLite
 │   ├── thumbs/                      320px 缩略图 (~30 KB / 张)
-│   ├── medium/                      1800px 详情预览缓存
 │   └── models/                      AI 模型权重 (~470 MB,首次启动从 HF 自动下载)
 └── scripts/start.sh                 一键启动后端 + 前端 + 开浏览器
 ```
@@ -293,7 +298,7 @@ SQLite,WAL 模式,启动时通过 `ALTER TABLE` 自动迁移新列。
 | `stem`, `ext` | TEXT | 用于 ARW+HIF 配对 |
 | `size`, `mtime`, `shot_at` | INTEGER / REAL | 文件元数据 + 拍摄时间 |
 | `width`, `height` | INTEGER | 像素尺寸 |
-| `thumb_path`, `medium_path` | TEXT | 缩略图 / 详情预览缓存路径 |
+| `thumb_path` | TEXT | 缩略图缓存路径 |
 | `subject_sharpness`, `eye_sharpness` | REAL | 鸟体 / 眼部锐度 |
 | `sharpness_pct` | REAL | 同目录百分位排名 |
 | `aesthetic_score` | REAL | TOPIQ 0–10 |
@@ -371,6 +376,8 @@ sqlite3 data/birdye.db "SELECT rating, COUNT(*) FROM photos WHERE deleted_at IS 
 | AI 阶段卡住 | 看 `data/backend.log`,通常是首次从 HF 下载模型,网络慢 |
 | 同一张照片显示两遍 | 检查 ARW + HIF 是否同 stem,不同 stem 会被当作两张独立 shot |
 | 详情视图打不开 | 看后端有没有报「rawpy can't extract thumb」;有些第三方 RAW 没有内嵌全分辨率预览 |
+| 对比视图无鸟图黑屏 | 老版本 bug,已修复:无鸟图现在以图心为锚点参与联动;若仍黑,Cmd+Shift+R 强刷 |
+| HF 模型下载失败,SSL 错误 | 装 `socksio`:`pip install socksio`,然后再试一次 `python scripts/download_models.py` |
 
 ---
 
@@ -381,6 +388,8 @@ sqlite3 data/birdye.db "SELECT rating, COUNT(*) FROM photos WHERE deleted_at IS 
 - [ ] 从 ToReview / 废纸篓批量恢复(`deletion_history` 已记录,接口未做)
 - [ ] PyInstaller 打包成单个 `.app`,双击启动
 - [ ] Windows / Linux 适配(目前只测过 macOS Apple Silicon)
+- [ ] 删除操作的「撤销最近一批」按钮(数据已备好)
+- [ ] 相似分组结果的客户端防抖,大目录拖滑块时不抖
 
 ---
 

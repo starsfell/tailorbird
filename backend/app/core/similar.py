@@ -34,6 +34,8 @@ def find_similar_groups(folder_id: int, threshold: int = 16) -> list[dict]:
                    MAX(eye_sharpness) AS eye_sharp,
                    MAX(aesthetic_score) AS aes,
                    MAX(bird_confidence) AS conf,
+                   MAX(bird_bbox) AS bird_bbox,
+                   MAX(eye_xy) AS eye_xy,
                    MAX(rating) AS rating,
                    MAX(pick) AS pick,
                    MAX(is_flying) AS is_flying,

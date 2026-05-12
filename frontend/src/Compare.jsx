@@ -3,63 +3,75 @@ import { api } from './api.js'
 import { PanZoom } from './PanZoom.jsx'
 
 const ZOOM_DEFAULT = 5.0  // 500%
-const COMPARE_SOURCE_PX = 6400  // server-resized preview width for compare
+const COMPARE_SOURCE_PX = 6400
 
-// Side-by-side comparison.
+// Side-by-side comparison with linked pan/zoom by default.
 //
-// Two modes:
-//   - linked (default, recommended): each photo is initially zoomed 300% onto
-//     its OWN bird eye. When the user pans/zooms ONE photo, the same scale and
-//     pan offset is applied to all others while each photo still rotates around
-//     its own eye anchor. Pan one => all pan; zoom one => all zoom; eyes stay
-//     aligned across the burst.
-//   - independent: each photo is fully on its own, useful when the burst has
-//     drifted compositionally.
+// All photos use a single shared {scale, offsetX, offsetY}. Each photo's
+// transform = -scale * base * (anchor - 0.5) + offset, where `anchor` is the
+// photo's logical center-of-interest:
+//   - eye_xy (AI eye keypoint) if detected
+//   - bird_bbox center if a bird was detected but no eye
+//   - image center (0.5, 0.5) otherwise
+// This means every bird's interest point sits at the same screen position; pan
+// or zoom any photo and all others follow.
 //
-// The shared state has three values: { scale, offsetX, offsetY }. Each photo's
-// actual transform = (eye_anchor_at_scale + offset). The eye_anchor depends on
-// the photo's eye coords and its measured display base size.
+// S (or the button) disables linkage entirely; in that mode each photo is on
+// its own (still fit-to-cell initially).
 export function Compare({ shots, onClose, onDelete }) {
   const [linked, setLinked] = useState(true)
   const [shared, setShared] = useState({ scale: ZOOM_DEFAULT, offsetX: 0, offsetY: 0 })
-  const [bases, setBases] = useState({})            // photoId -> {w, h}
-  const [indepT, setIndepT] = useState({})          // independent-mode per-shot transforms
+  const [bases, setBases] = useState({})
+  const [indepT, setIndepT] = useState({})
 
-  const eyeFor = (s) => s.eye_xy || [0.5, 0.5]
+  const anchorFor = (s) => {
+    if (Array.isArray(s.eye_xy) && s.eye_xy.length === 2) return s.eye_xy
+    if (Array.isArray(s.bird_bbox) && s.bird_bbox.length === 4) {
+      const [x, y, w, h] = s.bird_bbox
+      return [x + w / 2, y + h / 2]
+    }
+    return [0.5, 0.5]
+  }
 
-  // Compute each shot's transform in linked mode.
-  const linkedTransform = useCallback((s) => {
+  const transformForShot = useCallback((s) => {
     const base = bases[s.primary_id]
     if (!base || !base.w) return undefined
-    const [ex, ey] = eyeFor(s)
+    if (!linked) {
+      return indepT[s.primary_id] || { scale: 1, x: 0, y: 0 }
+    }
+    const [ax, ay] = anchorFor(s)
     return {
       scale: shared.scale,
-      x: -shared.scale * base.w * (ex - 0.5) + shared.offsetX,
-      y: -shared.scale * base.h * (ey - 0.5) + shared.offsetY,
+      x: -shared.scale * base.w * (ax - 0.5) + shared.offsetX,
+      y: -shared.scale * base.h * (ay - 0.5) + shared.offsetY,
     }
-  }, [bases, shared])
+  }, [bases, shared, linked, indepT])
 
-  // Reverse-engineer the shared {scale, offsetX, offsetY} from any one photo's
-  // newly-reported transform. The eye position + base size let us back out the
-  // offset.
   const reportFromShot = useCallback((s, newT) => {
+    if (!linked) {
+      setIndepT(prev => ({ ...prev, [s.primary_id]: newT }))
+      return
+    }
     const base = bases[s.primary_id]
     if (!base) return
-    const [ex, ey] = eyeFor(s)
-    const eyeAnchorX = -newT.scale * base.w * (ex - 0.5)
-    const eyeAnchorY = -newT.scale * base.h * (ey - 0.5)
+    const [ax, ay] = anchorFor(s)
+    const anchorX = -newT.scale * base.w * (ax - 0.5)
+    const anchorY = -newT.scale * base.h * (ay - 0.5)
     setShared({
       scale: newT.scale,
-      offsetX: newT.x - eyeAnchorX,
-      offsetY: newT.y - eyeAnchorY,
+      offsetX: newT.x - anchorX,
+      offsetY: newT.y - anchorY,
     })
-  }, [bases])
+  }, [bases, linked])
 
   const handleBase = useCallback((s, b) => {
     setBases(prev => ({ ...prev, [s.primary_id]: b }))
   }, [])
 
-  const resetView = () => setShared({ scale: ZOOM_DEFAULT, offsetX: 0, offsetY: 0 })
+  const resetView = () => {
+    setShared({ scale: ZOOM_DEFAULT, offsetX: 0, offsetY: 0 })
+    setIndepT({})
+  }
 
   useEffect(() => {
     const onKey = (e) => {
@@ -79,10 +91,10 @@ export function Compare({ shots, onClose, onDelete }) {
       <div className="modal-header">
         <div>
           <div style={{fontSize:13}}>
-            对比 {n} 张 · {linked ? '联动 (500% 对眼)' : '独立操作'}
+            对比 {n} 张 · {linked ? '联动 (500% 对鸟眼/鸟身/中心)' : '独立操作'}
           </div>
           <div style={{fontSize:11, color:'var(--muted)', marginTop:2}}>
-            S 切换联动 · 0 重置到初始 · Esc 关闭
+            S 切换联动 · 0 重置 · Esc 关闭
           </div>
         </div>
         <div style={{display:'flex', gap:8}}>
@@ -95,10 +107,9 @@ export function Compare({ shots, onClose, onDelete }) {
         {shots.map(s => {
           const eye = s.eye_sharpness == null ? null : s.eye_sharpness.toFixed(2)
           const subj = s.subject_sharpness == null ? '—' : s.subject_sharpness.toFixed(2)
-          const stars = '★'.repeat(s.rating ?? 0) + '☆'.repeat(3 - (s.rating ?? 0))
-          const ownFocus = {
-            x: eyeFor(s)[0], y: eyeFor(s)[1], scale: ZOOM_DEFAULT,
-          }
+          const stars = s.rating == null || s.rating < 0
+            ? '— 无鸟 —'
+            : ('★'.repeat(s.rating) + '☆'.repeat(3 - s.rating))
           return (
             <div key={s.primary_id} className="compare-cell">
               <div className="compare-cell-head">
@@ -116,20 +127,15 @@ export function Compare({ shots, onClose, onDelete }) {
               <PanZoom
                 src={api.fullUrl(s.primary_id, COMPARE_SOURCE_PX)}
                 onBaseChange={(b) => handleBase(s, b)}
-                transform={linked ? linkedTransform(s) : (indepT[s.primary_id] || undefined)}
-                onTransform={(nt) =>
-                  linked
-                    ? reportFromShot(s, nt)
-                    : setIndepT(prev => ({ ...prev, [s.primary_id]: nt }))
-                }
-                initialFocus={!linked ? ownFocus : undefined}
+                transform={transformForShot(s)}
+                onTransform={(nt) => reportFromShot(s, nt)}
               />
             </div>
           )
         })}
       </div>
       <div className="modal-hint">
-        联动模式: 拖任意一张,所有图同步平移;滚轮缩放,每张围绕自己的眼睛缩放,鸟眼始终对齐
+        联动模式: 所有图共享缩放和平移,以各自的鸟眼/鸟身/图心为锚点;拖一张所有图跟着动
       </div>
     </div>
   )
