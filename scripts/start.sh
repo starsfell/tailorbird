@@ -8,9 +8,9 @@ FRONTEND="$ROOT/frontend"
 PORT_BACKEND=7891
 PORT_FRONTEND=5173
 
-PYBIN="/opt/homebrew/Caskroom/miniconda/base/envs/birdye/bin/python"
+PYBIN="/opt/homebrew/Caskroom/miniconda/base/envs/tailorbird/bin/python"
 if [ ! -x "$PYBIN" ]; then
-  echo "未找到 birdye conda 环境的 Python: $PYBIN" >&2
+  echo "未找到 tailorbird conda 环境的 Python: $PYBIN" >&2
   exit 1
 fi
 

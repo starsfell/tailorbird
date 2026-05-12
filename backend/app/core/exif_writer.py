@@ -56,9 +56,7 @@ def write_xmp(photo_ids: Iterable[int]) -> dict:
             args.append(f"-XMP:Label={label}")
         else:
             args.append("-XMP:Label=")
-        # Mark with CreatorTool=birdye (legacy name, kept stable so old XMP
-        # written before the rename can still be recognized and cleared).
-        args.append("-XMP:CreatorTool=birdye")
+        args.append("-XMP:CreatorTool=tailorbird")
         args.append(str(p))
         try:
             r = subprocess.run(args, capture_output=True, text=True, timeout=15)

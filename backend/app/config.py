@@ -8,7 +8,7 @@ DATA_DIR = ROOT_DIR / "data"
 THUMBS_DIR = DATA_DIR / "thumbs"
 MEDIUM_DIR = DATA_DIR / "medium"
 MODELS_DIR = DATA_DIR / "models"
-DB_PATH = DATA_DIR / "birdye.db"
+DB_PATH = DATA_DIR / "tailorbird.db"
 
 THUMB_SIZE = 320
 RAW_EXTS = {".arw", ".nef", ".nrw", ".cr2", ".cr3", ".raf", ".orf", ".rw2", ".dng"}
@@ -29,7 +29,7 @@ SKILL_PRESETS = {
 }
 DEFAULT_SKILL = "intermediate"
 
-API_PORT = int(os.environ.get("BIRDYE_PORT", "7891"))
+API_PORT = int(os.environ.get("TAILORBIRD_PORT", "7891"))
 
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 THUMBS_DIR.mkdir(parents=True, exist_ok=True)
