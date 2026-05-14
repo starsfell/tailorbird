@@ -149,19 +149,37 @@ pick = 1 ⇔ rating == 3 且分数在所有 3 星中位于 top 25%
 
 ## 快速开始
 
+三种启动方式,日常用 `.app` 双击最省事:
+
 ```bash
-# 一键启动(推荐)
+# 1. 双击 .app(日常使用)
+#    第一次:把 tailorbird.app 拖到 /Applications,然后 Launchpad / Spotlight 搜 "tailorbird"
+#    内部会自动 build 前端 + 起后端 + 开浏览器;Cmd-Q 干净退出
+open /Applications/tailorbird.app
+
+# 2. 生产模式(命令行版,等价于 .app 内部跑的)
+#    单端口 7891,前端由 FastAPI 静态托管,改前端要重新 build(脚本会自动判断)
+./scripts/start_prod.sh
+
+# 3. 开发模式(前端热重载)
+#    后端 7891 + 前端 5173 两个进程,改前端 vite 实时刷新
 ./scripts/start.sh
 
-# 或分别启动两个进程
+# 想完全手动也行
 conda activate tailorbird
 cd backend && PYTHONPATH=. uvicorn app.main:app --port 7891   # 终端 1
 cd frontend && npm run dev                                     # 终端 2
 ```
 
-浏览器会自动打开 http://localhost:5173(被占用会落到 5174)。后端在 7891。
+浏览器会自动打开:
+- `.app` / `start_prod.sh` → http://127.0.0.1:7891(单端口)
+- `start.sh` → http://localhost:5173(被占用会落到 5174),后端在 7891
 
 **首次扫描会下载 ~470 MB 模型权重**(走 Hugging Face),需稳定网络。后续启动只读本地。
+
+### tailorbird.app 是怎么打包的
+
+不是 Tauri/Electron,就是手写的 macOS bundle:`Contents/MacOS/tailorbird` 一行 `exec` 调 `scripts/start_prod.sh`,`Contents/Resources/AppIcon.icns` 由 `assets/AppIcon.svg` 生成。`ROOT` 在 launcher 里写死成项目绝对路径——所以**项目目录别改名/搬位置**;真要搬,改一下 `tailorbird.app/Contents/MacOS/tailorbird` 里那行 `ROOT=` 就行。Cmd-Q 通过 SIGTERM 关 uvicorn,端口自动释放。
 
 ---
 
@@ -239,7 +257,17 @@ tailorbird/
 │   ├── tailorbird.db                SQLite
 │   ├── thumbs/                      320px 缩略图 (~30 KB / 张)
 │   └── models/                      AI 模型权重 (~470 MB,首次启动从 HF 自动下载)
-└── scripts/start.sh                 一键启动后端 + 前端 + 开浏览器
+├── assets/                          品牌资源
+│   ├── BIRDFOLIO_LOGO.svg           原始 logo(来自 birdfolio 项目)
+│   └── AppIcon.svg                  1024×1024 圆角图标源 (重新生成 .icns 用)
+├── tailorbird.app/                  macOS 双击启动器
+│   └── Contents/
+│       ├── Info.plist               bundle metadata + CFBundleIconFile
+│       ├── MacOS/tailorbird         一行 exec 调 start_prod.sh 的壳脚本
+│       └── Resources/AppIcon.icns   多尺寸图标 (16~1024 + @2x)
+└── scripts/
+    ├── start.sh                     开发模式: 后端 + 前端两个端口
+    └── start_prod.sh                生产模式: 单端口,前端 build 后由 FastAPI 托管
 ```
 
 ---

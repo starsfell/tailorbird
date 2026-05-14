@@ -1,0 +1,6 @@
+#!/bin/bash
+# tailorbird.app 启动器:exec 进 scripts/start_prod.sh。
+# Dock → Quit 会向本进程发 SIGTERM,uvicorn 收到后干净退出。
+# 注:ROOT 写死成项目路径,这样 .app 可以放在 /Applications。
+ROOT="/Users/starsfell/SOL/CANOPUS/birdye"
+exec "$ROOT/scripts/start_prod.sh"

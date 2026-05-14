@@ -1326,3 +1326,9 @@ def recompute(req: RecomputeReq) -> dict:
         else:
             _apply_ratings(fid, skill=req.preset)
     return {"recomputed": len(folder_ids), "ai_started": False}
+
+
+_FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+if _FRONTEND_DIST.is_dir():
+    from fastapi.staticfiles import StaticFiles
+    app.mount("/", StaticFiles(directory=str(_FRONTEND_DIST), html=True), name="frontend")
