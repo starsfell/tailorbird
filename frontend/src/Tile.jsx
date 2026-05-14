@@ -6,7 +6,7 @@ function Stars({ n }) {
   return <span className="stars">{'★'.repeat(n)}{'☆'.repeat(3 - n)}</span>
 }
 
-export function Tile({ shot, selected, onToggle, onOpen }) {
+export function Tile({ shot, selected, onToggle, onOpen, showTags = false }) {
   const cls = ['tile']
   if (selected) cls.push('selected')
   if (shot.is_cluster_best) cls.push('best')
@@ -44,6 +44,14 @@ export function Tile({ shot, selected, onToggle, onOpen }) {
       </div>
       {conf != null && conf > 0 && (
         <span className="bird-conf" title="鸟检测置信度">{Math.round(conf * 100)}%</span>
+      )}
+      {showTags && shot.tags && shot.tags.length > 0 && (
+        <div className="tile-tags">
+          {shot.tags.slice(0, 4).map(t => (
+            <span key={t.id} className="tile-tag" style={t.color ? { background: t.color, color:'#0a1612' } : undefined}>{t.name}</span>
+          ))}
+          {shot.tags.length > 4 && <span className="tile-tag more">+{shot.tags.length - 4}</span>}
+        </div>
       )}
     </div>
   )

@@ -1,10 +1,14 @@
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { api } from './api.js'
 import { Grid } from './Grid.jsx'
 import { Clusters } from './Clusters.jsx'
 import { DetailView } from './DetailView.jsx'
 import { Compare } from './Compare.jsx'
 import { SimilarView } from './SimilarView.jsx'
+import { TagBatchDialog } from './TagBatchDialog.jsx'
+import { TagFilterPanel } from './TagFilterPanel.jsx'
+import { TagCenterView } from './TagCenterView.jsx'
+import { TriageView } from './TriageView.jsx'
 
 const PHASE_LABEL = {
   idle: '空闲',
@@ -25,6 +29,16 @@ export default function App() {
   const [selected, setSelected] = useState(new Set())
   const [filter, setFilter] = useState({ min_sharpness: 0, only_cluster_best: false, min_stars: 0, only_pick: false })
   const [category, setCategory] = useState(null)   // 'no-bird' | 'oof' | 'over' | 'under' | 'zero' | 'flying' | 'best-focus' | null
+  const [tagFilter, setTagFilter] = useState(new Set())   // Set<tag_id>
+  const [tagFilterMode, setTagFilterMode] = useState('or')   // 'or' | 'and'
+  const [allTags, setAllTags] = useState([])
+  const [tagsTick, setTagsTick] = useState(0)
+  const [tagPanelExpanded, setTagPanelExpanded] = useState(() => {
+    try { return localStorage.getItem('tagPanelExpanded') !== '0' } catch { return true }
+  })
+  useEffect(() => {
+    try { localStorage.setItem('tagPanelExpanded', tagPanelExpanded ? '1' : '0') } catch {}
+  }, [tagPanelExpanded])
   const [busy, setBusy] = useState(false)
   const [pairDelete, setPairDelete] = useState(true)
   const [deleteMode, setDeleteMode] = useState('move')  // 'trash' | 'move' (move is safer)
@@ -34,6 +48,7 @@ export default function App() {
   const [detail, setDetail] = useState(null)
   const [compare, setCompare] = useState(null)
   const [similarTick, setSimilarTick] = useState(0)   // bump to force SimilarView re-fetch
+  const [tagDialogIds, setTagDialogIds] = useState(null)  // Set<id> | null
 
   const refreshFolders = useCallback(async () => {
     try {
@@ -57,13 +72,33 @@ export default function App() {
       else if (category === 'zero') items = items.filter(s => s.rating === 0)
       else if (category === 'flying') items = items.filter(s => s.is_flying)
       else if (category === 'best-focus') items = items.filter(s => s.focus_weight != null && s.focus_weight >= 1.05)
+      if (tagFilter.size > 0) {
+        if (tagFilterMode === 'and') {
+          items = items.filter(s => {
+            const ids = new Set((s.tags || []).map(t => t.id))
+            for (const id of tagFilter) if (!ids.has(id)) return false
+            return true
+          })
+        } else {
+          items = items.filter(s => (s.tags || []).some(t => tagFilter.has(t.id)))
+        }
+      }
       setShots(items)
       setTotal(r.total)
     } catch (e) { console.error(e) }
-  }, [folder, filter, category])
+  }, [folder, filter, category, tagFilter, tagFilterMode])
 
   useEffect(() => { refreshFolders() }, [refreshFolders])
   useEffect(() => { refreshShots() }, [refreshShots])
+  useEffect(() => {
+    api.listTags().then(r => setAllTags(r.tags || [])).catch(() => {})
+  }, [tagsTick])
+
+  const countsByTag = useMemo(() => {
+    const m = new Map()
+    for (const s of shots) for (const t of (s.tags || [])) m.set(t.id, (m.get(t.id) || 0) + 1)
+    return m
+  }, [shots])
 
   // Continuous poll of scan status — works regardless of who started the run
   useEffect(() => {
@@ -85,10 +120,10 @@ export default function App() {
     return () => { cancelled = true }
   }, [refreshShots])
 
-  const onScan = async () => {
+  const onScan = async (runAi = true) => {
     if (!folder.trim()) return
     setBusy(true)
-    try { await api.startScan(folder.trim(), true) }
+    try { await api.startScan(folder.trim(), runAi) }
     catch (e) { alert('扫描启动失败: ' + e.message); setBusy(false); return }
     const wait = () => new Promise(r => setTimeout(r, 1500))
     while (true) {
@@ -166,6 +201,10 @@ export default function App() {
     const onKey = (e) => {
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return
       if (detail || compare) return
+      if (tagDialogIds) {
+        if (e.key === 'Escape') { e.preventDefault(); setTagDialogIds(null) }
+        return
+      }
       if (e.key === 'a' || e.key === 'A') { e.preventDefault(); setSelected(new Set(shots.map(s => s.primary_id))) }
       else if (e.key === 'Escape') { setSelected(new Set()) }
       else if (e.key === 'b' || e.key === 'B') {
@@ -174,6 +213,16 @@ export default function App() {
       }
       else if (e.key === 'd' || e.key === 'D') { e.preventDefault(); onDelete() }
       else if (e.key === 'c' || e.key === 'C') { e.preventDefault(); openCompare() }
+      else if (e.key === 't' || e.key === 'T') {
+        if (selected.size > 0) { e.preventDefault(); setTagDialogIds(new Set(selected)) }
+      }
+      else if (e.key === 'r' || e.key === 'R') {
+        if (selected.size > 0) {
+          e.preventDefault()
+          const firstId = [...selected][0]
+          api.revealInFinder(firstId).catch(err => alert('打开 Finder 失败: ' + err.message))
+        }
+      }
       else if (e.key === ' ') {
         e.preventDefault()
         const first = shots.find(s => selected.has(s.primary_id))
@@ -182,7 +231,7 @@ export default function App() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [shots, selected, detail, compare])
+  }, [shots, selected, detail, compare, tagDialogIds])
 
   const statusText = scanStatus
     ? `${PHASE_LABEL[scanStatus.phase] || scanStatus.phase}${scanStatus.total ? ` ${scanStatus.done}/${scanStatus.total}` : ''}`
@@ -214,6 +263,27 @@ export default function App() {
     })
   }
 
+  const handleCompareBatchDelete = async (shotList) => {
+    const ids = shotList.map(s => s.primary_id)
+    if (ids.length === 0) return
+    await onDelete(ids)
+    setCompare(prev => prev ? prev.filter(s => !ids.includes(s.primary_id)) : null)
+  }
+
+  const handleCompareBatchRemove = (shotList) => {
+    const idSet = new Set(shotList.map(s => s.primary_id))
+    setCompare(prev => {
+      if (!prev) return null
+      const next = prev.filter(s => !idSet.has(s.primary_id))
+      return next.length < 2 ? null : next
+    })
+    setSelected(prev => {
+      const next = new Set(prev)
+      for (const id of idSet) next.delete(id)
+      return next
+    })
+  }
+
   return (
     <div className="app">
       <div className="topbar">
@@ -221,28 +291,82 @@ export default function App() {
           type="text" value={folder} onChange={e => setFolder(e.target.value)}
           placeholder="照片目录绝对路径"
         />
-        <button className="primary" onClick={onScan} disabled={busy || !folder.trim()}>{busy ? '处理中…' : '扫描+AI'}</button>
+        <button onClick={async () => {
+          try {
+            const r = await api.pickFolder()
+            if (r.path) setFolder(r.path)
+          } catch (e) { alert('打开选择框失败: ' + e.message) }
+        }} title="弹出 macOS 文件夹选择框">📁 选择…</button>
+        <button className="primary" onClick={() => onScan(true)} disabled={busy || !folder.trim()}>{busy ? '处理中…' : '扫描+AI'}</button>
+        <button onClick={() => onScan(false)} disabled={busy || !folder.trim()} title="只抽预览/EXIF,跳过 AI(适合非鸟摄,快很多)">快速扫描</button>
         <button onClick={onRerunAi} disabled={busy || !folder} title="只重跑 AI,不重新扫描">重跑 AI</button>
         <div className="status">{statusText}</div>
         <div className="tabs">
           <button className={tab === 'grid' ? 'active' : ''} onClick={() => setTab('grid')}>网格</button>
           <button className={tab === 'cluster' ? 'active' : ''} onClick={() => setTab('cluster')}>连拍组</button>
           <button className={tab === 'similar' ? 'active' : ''} onClick={() => setTab('similar')}>相似图片</button>
+          <button className={tab === 'triage' ? 'active' : ''} onClick={() => setTab('triage')}>整理</button>
+          <button className={tab === 'tags' ? 'active' : ''} onClick={() => setTab('tags')}>标签</button>
         </div>
       </div>
 
-      <div className="body">
+      <div className={`body${(tab === 'tags' || tab === 'triage') ? ' tag-mode' : ''}`}>
+        {tab === 'tags' ? (
+          <TagCenterView
+            allTags={allTags}
+            tagFilter={tagFilter}
+            setTagFilter={setTagFilter}
+            filterMode={tagFilterMode}
+            setFilterMode={setTagFilterMode}
+            onTagsChanged={() => setTagsTick(t => t + 1)}
+            selected={selected}
+            setSelected={setSelected}
+            onOpen={openDetail}
+          />
+        ) : tab === 'triage' ? (
+          <TriageView
+            folder={folder}
+            setFolder={setFolder}
+            folders={folders}
+            allTags={allTags}
+            onTagsChanged={() => setTagsTick(t => t + 1)}
+            selected={selected}
+            setSelected={setSelected}
+            onOpen={openDetail}
+          />
+        ) : (<>
         <aside className="sidebar">
           <h3>已扫描目录</h3>
           {folders.length === 0 && <div style={{color:'var(--muted)', fontSize:12}}>暂无</div>}
           {folders.map(f => (
-            <div key={f.id} style={{
+            <div key={f.id} className="folder-row" style={{
               padding:'6px 8px', borderRadius:6, marginBottom:4,
               background: f.path === folder ? '#1f2228' : 'transparent',
               cursor:'pointer', fontSize:12, wordBreak:'break-all',
+              position:'relative',
             }} onClick={() => setFolder(f.path)} title={f.path}>
-              {f.path.replace(/^.*\//, '')}
-              <div style={{color:'var(--muted)', fontSize:11}}>{f.alive_count}/{f.photo_count} 文件</div>
+              <button
+                className="folder-del"
+                title="从 tailorbird 移除(不删磁盘文件)"
+                onClick={async (e) => {
+                  e.stopPropagation()
+                  const name = f.path.replace(/^.*\//, '')
+                  const ok = window.confirm(
+                    `从 tailorbird 移除目录「${name}」?\n· 数据库里 ${f.photo_count} 张照片记录会清掉\n· 磁盘原文件不动`
+                  )
+                  if (!ok) return
+                  try {
+                    await api.deleteFolder(f.id)
+                    if (folder === f.path) setFolder('')
+                    await refreshFolders()
+                    await refreshShots()
+                  } catch (err) { alert('删除失败: ' + err.message) }
+                }}
+              >×</button>
+              <div style={{paddingRight: 18}}>
+                {f.path.replace(/^.*\//, '')}
+                <div style={{color:'var(--muted)', fontSize:11}}>{f.alive_count}/{f.photo_count} 文件</div>
+              </div>
             </div>
           ))}
 
@@ -400,6 +524,18 @@ export default function App() {
             <Clusters shots={shots} selected={selected} setSelected={setSelected} onOpen={openDetail} />
           )}
         </main>
+        <TagFilterPanel
+          expanded={tagPanelExpanded}
+          setExpanded={setTagPanelExpanded}
+          allTags={allTags}
+          tagFilter={tagFilter}
+          setTagFilter={setTagFilter}
+          filterMode={tagFilterMode}
+          setFilterMode={setTagFilterMode}
+          onTagsChanged={() => setTagsTick(t => t + 1)}
+          countsByTag={countsByTag}
+        />
+        </>)}
       </div>
 
       <div className="footer">
@@ -407,14 +543,42 @@ export default function App() {
         <div>已选 {selected.size}</div>
         <div className="spacer" />
         <button onClick={openCompare} disabled={selected.size < 2}>对比 (C)</button>
+        <button onClick={() => setTagDialogIds(new Set(selected))} disabled={selected.size === 0}>+ 标签 (T)</button>
         <button onClick={() => setSelected(new Set())} disabled={selected.size === 0}>清空</button>
         <button className="danger" disabled={selected.size === 0} onClick={() => onDelete()}>
           {deleteMode === 'move' ? `移走 (${selected.size})` : `废纸篓 (${selected.size})`}
         </button>
       </div>
 
-      {detail && <DetailView shots={detail.list} startIndex={detail.index} onClose={() => setDetail(null)} onDelete={handleDetailDelete} onRefresh={refreshShots} />}
-      {compare && <Compare shots={compare} onClose={() => setCompare(null)} onDelete={handleCompareDelete} onRemove={handleCompareRemove} />}
+      {detail && <DetailView shots={detail.list} startIndex={detail.index} onClose={() => setDetail(null)} onDelete={handleDetailDelete} onRefresh={async () => { await refreshShots(); setTagsTick(t => t + 1) }} />}
+      {compare && <Compare
+        shots={compare}
+        onClose={() => { setCompare(null); setSelected(new Set()) }}
+        onDelete={handleCompareDelete}
+        onRemove={handleCompareRemove}
+        onBatchDelete={handleCompareBatchDelete}
+        onBatchRemove={handleCompareBatchRemove}
+        allTags={allTags}
+        onTagsApplied={async () => {
+          await refreshShots()
+          setTagsTick(t => t + 1)
+          try {
+            const r = await api.listShots({ folder, limit: 5000, include_deleted: false })
+            const byId = new Map((r.items || []).map(s => [s.primary_id, s]))
+            setCompare(prev => prev?.map(c => byId.get(c.primary_id) || c) || prev)
+          } catch {}
+        }}
+      />}
+      {tagDialogIds && (
+        <TagBatchDialog
+          shots={compare
+            ? [...compare, ...shots.filter(s => !compare.some(c => c.primary_id === s.primary_id))]
+            : shots}
+          selectedIds={tagDialogIds}
+          onClose={() => setTagDialogIds(null)}
+          onApplied={async () => { await refreshShots(); setTagsTick(t => t + 1) }}
+        />
+      )}
     </div>
   )
 }

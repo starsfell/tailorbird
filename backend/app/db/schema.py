@@ -65,6 +65,26 @@ CREATE TABLE IF NOT EXISTS deletion_history (
 );
 
 CREATE INDEX IF NOT EXISTS idx_deletion_batch ON deletion_history(batch_id);
+
+CREATE TABLE IF NOT EXISTS tags (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    color TEXT,
+    is_favorite INTEGER DEFAULT 0,
+    parent_id INTEGER,
+    created_at REAL,
+    FOREIGN KEY (parent_id) REFERENCES tags(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS photo_tags (
+    photo_id INTEGER NOT NULL,
+    tag_id INTEGER NOT NULL,
+    PRIMARY KEY (photo_id, tag_id),
+    FOREIGN KEY (photo_id) REFERENCES photos(id) ON DELETE CASCADE,
+    FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_photo_tags_tag ON photo_tags(tag_id);
 """
 
 
@@ -93,10 +113,16 @@ def init_db() -> None:
             ("medium_path", "TEXT"),
             ("rating", "INTEGER"),
             ("pick", "INTEGER DEFAULT 0"),
+            ("xmp_tags", "TEXT"),
         ]
         for col, typ in migrations:
             if col not in cols:
                 conn.execute(f"ALTER TABLE photos ADD COLUMN {col} {typ}")
+        # Migrate tags table for hierarchy (Phase 3)
+        tag_cols = {r[1] for r in conn.execute("PRAGMA table_info(tags)").fetchall()}
+        if "parent_id" not in tag_cols:
+            conn.execute("ALTER TABLE tags ADD COLUMN parent_id INTEGER REFERENCES tags(id) ON DELETE SET NULL")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_tags_parent ON tags(parent_id)")
         conn.commit()
 
 

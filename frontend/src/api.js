@@ -25,6 +25,7 @@ export const api = {
   },
   photoDetail: (id) => req(`/api/photo/${id}/detail`),
   listFolders: () => req('/api/folders'),
+  deleteFolder: (id) => req(`/api/folders/${id}`, { method: 'DELETE' }),
   recompute: (folder, runAi = false, preset = 'intermediate') =>
     req('/api/recompute', {
       method: 'POST',
@@ -47,6 +48,16 @@ export const api = {
     req('/api/exif/clear', { method: 'POST', body: JSON.stringify({ photo_ids }) }),
   openFolder: (path) =>
     req('/api/open-folder', { method: 'POST', body: JSON.stringify({ path }) }),
+  revealInFinder: (photo_id) =>
+    req('/api/reveal', { method: 'POST', body: JSON.stringify({ photo_id }) }),
+  pickFolder: () => req('/api/pick-folder', { method: 'POST' }),
+  exportTag: (tag_id, opts = {}) =>
+    req('/api/export-tag', {
+      method: 'POST',
+      body: JSON.stringify({ tag_id, ...opts }),
+    }),
+  moveTagToSubfolder: (tag_id) =>
+    req('/api/move-tag-to-subfolder', { method: 'POST', body: JSON.stringify({ tag_id }) }),
   findMoveTarget: (folder, name = 'ToReview') => {
     const qs = new URLSearchParams({ folder, name })
     return req('/api/find-move-target?' + qs.toString())
@@ -64,4 +75,16 @@ export const api = {
   },
   thumbUrl: (id) => `/api/thumb/${id}`,
   fullUrl: (id, maxSide = 3600) => `/api/full/${id}?max_side=${maxSide}`,
+  // ----- tags -----
+  listTags: () => req('/api/tags'),
+  createTag: (name, opts = {}) =>
+    req('/api/tags', { method: 'POST', body: JSON.stringify({ name, ...opts }) }),
+  updateTag: (id, patch) =>
+    req(`/api/tags/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+  deleteTag: (id) => req(`/api/tags/${id}`, { method: 'DELETE' }),
+  batchPhotoTags: (photo_ids, { add_tag_ids = [], remove_tag_ids = [], add_tag_names = [] } = {}) =>
+    req('/api/photo-tags/batch', {
+      method: 'POST',
+      body: JSON.stringify({ photo_ids, add_tag_ids, remove_tag_ids, add_tag_names }),
+    }),
 }

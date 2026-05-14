@@ -199,10 +199,17 @@ def list_shots(
     min_sharpness: float = 0.0,
     only_cluster_best: bool = False,
     cluster_id: Optional[int] = None,
+    tag_ids: Optional[str] = None,    # comma-separated tag ids
+    tag_mode: str = "or",             # 'or' | 'and'
+    untagged: bool = False,           # only return shots where no sibling has any tag
     limit: int = 5000,
     offset: int = 0,
 ) -> dict:
-    """Return one entry per shot (grouped by stem)."""
+    """Return one entry per shot (grouped by stem).
+
+    If tag_ids is given, shots are filtered so they have at least one (or-mode)
+    or all (and-mode) of the given tags on any sibling photo. Works across
+    folders when `folder` is omitted."""
     folder = _normalize(folder)
     where = ["deleted_at IS NULL"]
     params: list = []
@@ -212,6 +219,59 @@ def list_shots(
     if cluster_id is not None:
         where.append("cluster_id=?")
         params.append(cluster_id)
+    tag_id_list: list[int] = []
+    if tag_ids:
+        try:
+            tag_id_list = [int(x) for x in tag_ids.split(",") if x.strip()]
+        except ValueError:
+            raise HTTPException(400, "tag_ids must be comma-separated integers")
+    if untagged:
+        where.append(
+            """(folder_id, stem) NOT IN (
+                SELECT p2.folder_id, p2.stem FROM photos p2
+                JOIN photo_tags pt ON pt.photo_id = p2.id
+                WHERE p2.deleted_at IS NULL
+            )"""
+        )
+    if tag_id_list:
+        # For AND-mode we need to know which descendant set satisfies each
+        # requested tag, so expand them per-tag (not as a flat union).
+        with tx() as _conn:
+            per_tag_descendants: list[set[int]] = [
+                _descendant_tag_ids(_conn, [tid]) for tid in tag_id_list
+            ]
+        if tag_mode == "and":
+            # For each requested tag (with its descendants), the shot must have
+            # at least one photo_tags row pointing into that set.
+            for desc_set in per_tag_descendants:
+                if not desc_set:
+                    where.append("0")  # impossible
+                    continue
+                ph = ",".join(["?"] * len(desc_set))
+                where.append(
+                    f"""(folder_id, stem) IN (
+                        SELECT p2.folder_id, p2.stem FROM photos p2
+                        JOIN photo_tags pt ON pt.photo_id = p2.id
+                        WHERE pt.tag_id IN ({ph}) AND p2.deleted_at IS NULL
+                    )"""
+                )
+                params.extend(list(desc_set))
+        else:
+            # OR-mode: shot is included if any of the descendants of any
+            # requested tag is attached.
+            all_desc: set[int] = set()
+            for s in per_tag_descendants:
+                all_desc |= s
+            if all_desc:
+                ph = ",".join(["?"] * len(all_desc))
+                where.append(
+                    f"""(folder_id, stem) IN (
+                        SELECT p2.folder_id, p2.stem FROM photos p2
+                        JOIN photo_tags pt ON pt.photo_id = p2.id
+                        WHERE pt.tag_id IN ({ph}) AND p2.deleted_at IS NULL
+                    )"""
+                )
+                params.extend(list(all_desc))
 
     sql = f"""
         SELECT
@@ -244,6 +304,23 @@ def list_shots(
     """
     with tx() as conn:
         rows = conn.execute(sql, [*params, limit, offset]).fetchall()
+        # Fetch tags for every photo in this page's shots in one shot.
+        all_member_ids: list[int] = []
+        for r in rows:
+            all_member_ids.extend(int(x) for x in r["member_ids"].split(","))
+        tags_by_photo: dict[int, list[dict]] = {}
+        if all_member_ids:
+            placeholders = ",".join(["?"] * len(all_member_ids))
+            tag_rows = conn.execute(
+                f"""SELECT pt.photo_id, t.id, t.name, t.color
+                    FROM photo_tags pt JOIN tags t ON t.id = pt.tag_id
+                    WHERE pt.photo_id IN ({placeholders})""",
+                all_member_ids,
+            ).fetchall()
+            for tr in tag_rows:
+                tags_by_photo.setdefault(tr["photo_id"], []).append(
+                    {"id": tr["id"], "name": tr["name"], "color": tr["color"]}
+                )
         # For thumbnail we prefer the ARW member's thumb (most accurate preview)
         items = []
         for r in rows:
@@ -268,12 +345,22 @@ def list_shots(
                 if not v: return None
                 try: return _json.loads(v)
                 except Exception: return None
+            # Dedup tags across siblings (ARW + HIF should have the same tags,
+            # but be defensive in case they drift).
+            seen_tag_ids: set[int] = set()
+            shot_tags: list[dict] = []
+            for mid in member_ids:
+                for t in tags_by_photo.get(mid, []):
+                    if t["id"] not in seen_tag_ids:
+                        seen_tag_ids.add(t["id"])
+                        shot_tags.append(t)
             items.append(
                 {
                     "primary_id": primary_id,
                     "stem": d["stem"],
                     "formats": formats,
                     "member_ids": member_ids,
+                    "tags": shot_tags,
                     "shot_at": d["shot_at"],
                     "subject_sharpness": d["subject_sharpness"],
                     "eye_sharpness": d["eye_sharpness"],
@@ -397,6 +484,434 @@ def exif_clear(req: WriteXmpReq) -> dict:
     return clear_xmp(req.photo_ids)
 
 
+# ---------------- Tags ----------------
+
+class TagCreateReq(BaseModel):
+    name: str
+    color: Optional[str] = None
+    is_favorite: bool = False
+    parent_id: Optional[int] = None
+
+
+class TagPatchReq(BaseModel):
+    name: Optional[str] = None
+    color: Optional[str] = None
+    is_favorite: Optional[bool] = None
+    parent_id: Optional[int] = None  # use -1 sentinel to set NULL
+
+
+class PhotoTagsBatchReq(BaseModel):
+    photo_ids: list[int]
+    add_tag_ids: list[int] = []
+    remove_tag_ids: list[int] = []
+    add_tag_names: list[str] = []  # creates if missing; supports "A/B/C" path syntax
+
+
+def _descendant_tag_ids(conn, tag_ids: list[int]) -> set[int]:
+    """Return tag_ids ∪ all transitive descendants via recursive CTE."""
+    if not tag_ids:
+        return set()
+    placeholders = ",".join(["?"] * len(tag_ids))
+    rows = conn.execute(
+        f"""WITH RECURSIVE d(id) AS (
+                SELECT id FROM tags WHERE id IN ({placeholders})
+                UNION
+                SELECT t.id FROM tags t JOIN d ON t.parent_id = d.id
+            ) SELECT id FROM d""",
+        tag_ids,
+    ).fetchall()
+    return {r[0] for r in rows}
+
+
+def _ancestor_tag_ids(conn, tag_id: int) -> list[int]:
+    """Return [tag_id, parent, grandparent, ...] for one tag, leaf-first."""
+    out: list[int] = []
+    seen: set[int] = set()
+    cur: int | None = tag_id
+    while cur is not None and cur not in seen:
+        seen.add(cur)
+        out.append(cur)
+        row = conn.execute("SELECT parent_id FROM tags WHERE id = ?", (cur,)).fetchone()
+        cur = row["parent_id"] if row else None
+    return out
+
+
+def _resolve_tag_path(conn, path: str, *, create_missing: bool = True) -> int | None:
+    """Resolve a slash-separated path like "鸟类/水鸟/白鹭" to a leaf tag id,
+    creating intermediates as needed. Returns the leaf id, or None on empty."""
+    import time
+    parts = [p.strip() for p in path.split("/") if p.strip()]
+    if not parts:
+        return None
+    parent_id: int | None = None
+    for i, name in enumerate(parts):
+        # Look up by (name, parent_id) — siblings under same parent share a namespace.
+        if parent_id is None:
+            row = conn.execute(
+                "SELECT id FROM tags WHERE name = ? COLLATE NOCASE AND parent_id IS NULL",
+                (name,),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT id FROM tags WHERE name = ? COLLATE NOCASE AND parent_id = ?",
+                (name, parent_id),
+            ).fetchone()
+        if row:
+            parent_id = row["id"]
+        elif create_missing:
+            # Names are globally unique (UNIQUE constraint). When the same leaf name
+            # appears under different parents we suffix to disambiguate.
+            actual_name = name
+            tries = 0
+            while True:
+                try:
+                    cur = conn.execute(
+                        "INSERT INTO tags (name, parent_id, created_at) VALUES (?, ?, ?)",
+                        (actual_name, parent_id, time.time()),
+                    )
+                    parent_id = cur.lastrowid
+                    break
+                except Exception:
+                    tries += 1
+                    if tries > 50:
+                        raise
+                    # name collision: append disambig suffix
+                    actual_name = f"{name} ({tries})"
+        else:
+            return None
+    return parent_id
+
+
+def _expand_to_siblings(conn, photo_ids: list[int]) -> list[int]:
+    """Given primary photo_ids, return ids of all live siblings (same folder + stem)."""
+    if not photo_ids:
+        return []
+    placeholders = ",".join(["?"] * len(photo_ids))
+    rows = conn.execute(
+        f"""SELECT DISTINCT p2.id
+            FROM photos p1 JOIN photos p2
+              ON p1.folder_id = p2.folder_id AND p1.stem = p2.stem
+            WHERE p1.id IN ({placeholders}) AND p2.deleted_at IS NULL""",
+        photo_ids,
+    ).fetchall()
+    return [r[0] for r in rows]
+
+
+@app.get("/api/tags")
+def list_tags() -> dict:
+    with tx() as conn:
+        rows = conn.execute(
+            """SELECT t.id, t.name, t.color, t.is_favorite, t.parent_id, t.created_at,
+                      COUNT(pt.photo_id) AS usage_count
+               FROM tags t LEFT JOIN photo_tags pt ON pt.tag_id = t.id
+               GROUP BY t.id
+               ORDER BY t.is_favorite DESC, t.name COLLATE NOCASE"""
+        ).fetchall()
+    return {"tags": [dict(r) for r in rows]}
+
+
+@app.post("/api/tags")
+def create_tag(req: TagCreateReq) -> dict:
+    import time
+    name = req.name.strip()
+    if not name:
+        raise HTTPException(400, "name is empty")
+    with tx() as conn:
+        row = conn.execute("SELECT id FROM tags WHERE name = ? COLLATE NOCASE", (name,)).fetchone()
+        if row:
+            tid = row["id"]
+            if req.color is not None or req.is_favorite or req.parent_id is not None:
+                conn.execute(
+                    "UPDATE tags SET color = COALESCE(?, color), is_favorite = MAX(is_favorite, ?), parent_id = COALESCE(?, parent_id) WHERE id = ?",
+                    (req.color, 1 if req.is_favorite else 0, req.parent_id, tid),
+                )
+        else:
+            cur = conn.execute(
+                "INSERT INTO tags (name, color, is_favorite, parent_id, created_at) VALUES (?, ?, ?, ?, ?)",
+                (name, req.color, 1 if req.is_favorite else 0, req.parent_id, time.time()),
+            )
+            tid = cur.lastrowid
+        out = dict(conn.execute(
+            "SELECT id, name, color, is_favorite, parent_id, created_at FROM tags WHERE id = ?", (tid,)
+        ).fetchone())
+    return out
+
+
+@app.patch("/api/tags/{tag_id}")
+def patch_tag(tag_id: int, req: TagPatchReq) -> dict:
+    with tx() as conn:
+        if conn.execute("SELECT 1 FROM tags WHERE id = ?", (tag_id,)).fetchone() is None:
+            raise HTTPException(404, "tag not found")
+        if req.name is not None:
+            new_name = req.name.strip()
+            if not new_name:
+                raise HTTPException(400, "name is empty")
+            dup = conn.execute(
+                "SELECT id FROM tags WHERE name = ? COLLATE NOCASE AND id <> ?",
+                (new_name, tag_id),
+            ).fetchone()
+            if dup:
+                raise HTTPException(409, f"tag name already exists (id={dup['id']})")
+            conn.execute("UPDATE tags SET name = ? WHERE id = ?", (new_name, tag_id))
+        if req.color is not None:
+            conn.execute("UPDATE tags SET color = ? WHERE id = ?", (req.color, tag_id))
+        if req.is_favorite is not None:
+            conn.execute("UPDATE tags SET is_favorite = ? WHERE id = ?", (1 if req.is_favorite else 0, tag_id))
+        if req.parent_id is not None:
+            # -1 sentinel = set to NULL (move to root)
+            new_parent = None if req.parent_id == -1 else req.parent_id
+            if new_parent is not None:
+                if new_parent == tag_id:
+                    raise HTTPException(400, "tag cannot be its own parent")
+                if conn.execute("SELECT 1 FROM tags WHERE id = ?", (new_parent,)).fetchone() is None:
+                    raise HTTPException(400, f"parent tag {new_parent} does not exist")
+                # Cycle check: new_parent must not be a descendant of tag_id
+                descendants = _descendant_tag_ids(conn, [tag_id])
+                if new_parent in descendants:
+                    raise HTTPException(400, "cycle: new parent is a descendant of this tag")
+            conn.execute("UPDATE tags SET parent_id = ? WHERE id = ?", (new_parent, tag_id))
+        out = dict(conn.execute(
+            "SELECT id, name, color, is_favorite, parent_id, created_at FROM tags WHERE id = ?", (tag_id,)
+        ).fetchone())
+    return out
+
+
+class MoveTagToSubfolderReq(BaseModel):
+    tag_id: int
+
+
+@app.post("/api/move-tag-to-subfolder")
+def move_tag_to_subfolder(req: MoveTagToSubfolderReq) -> dict:
+    """Move every photo carrying `tag_id` (or descendant) into a `<tag_name>/`
+    subfolder of its OWN source directory. ARW + HIF kept together. Uses the
+    same move-to-subfolder convention as the existing 'move to ToReview' flow,
+    so photos are marked deleted in tailorbird but visible in Finder right
+    next to where they originally lived."""
+    with tx() as conn:
+        tag_row = conn.execute("SELECT name FROM tags WHERE id = ?", (req.tag_id,)).fetchone()
+        if tag_row is None:
+            raise HTTPException(404, "tag not found")
+        tag_name = tag_row["name"]
+        descendants = _descendant_tag_ids(conn, [req.tag_id])
+        if not descendants:
+            return {"tag_id": req.tag_id, "tag_name": tag_name, "moved": [], "failed": []}
+        ph = ",".join(["?"] * len(descendants))
+        rows = conn.execute(
+            f"""SELECT DISTINCT p.id
+                FROM photos p JOIN photo_tags pt ON pt.photo_id = p.id
+                WHERE pt.tag_id IN ({ph}) AND p.deleted_at IS NULL""",
+            list(descendants),
+        ).fetchall()
+        photo_ids = [r["id"] for r in rows]
+    if not photo_ids:
+        return {"tag_id": req.tag_id, "tag_name": tag_name, "moved": [], "failed": []}
+    result = move_photos(photo_ids, subfolder_name=tag_name, pair_with_sidecar=True)
+    return {"tag_id": req.tag_id, "tag_name": tag_name, **result}
+
+
+class ExportTagReq(BaseModel):
+    tag_id: int
+    dest_dir: str
+    subfolder_name: Optional[str] = None     # default: tag's own name
+    mode: str = "copy"                        # 'copy' | 'move'
+    pair_with_sidecar: bool = True
+
+
+@app.post("/api/export-tag")
+def export_tag(req: ExportTagReq) -> dict:
+    """Copy or move every photo that carries `tag_id` (or any descendant tag,
+    Lightroom-style) into `<dest_dir>/<subfolder_name>/`. ARW + HIF siblings
+    are kept together when pair_with_sidecar is true."""
+    import shutil
+    import time
+    import uuid
+
+    if req.mode not in ("copy", "move"):
+        raise HTTPException(400, "mode must be 'copy' or 'move'")
+
+    with tx() as conn:
+        tag_row = conn.execute("SELECT name FROM tags WHERE id = ?", (req.tag_id,)).fetchone()
+        if tag_row is None:
+            raise HTTPException(404, "tag not found")
+        tag_name = tag_row["name"]
+        descendants = _descendant_tag_ids(conn, [req.tag_id])
+        if not descendants:
+            return {"tag_id": req.tag_id, "destination": None, "exported": [], "failed": []}
+
+        ph = ",".join(["?"] * len(descendants))
+        photo_rows = conn.execute(
+            f"""SELECT DISTINCT p.id, p.path, p.stem, p.ext, p.folder_id
+                FROM photos p JOIN photo_tags pt ON pt.photo_id = p.id
+                WHERE pt.tag_id IN ({ph}) AND p.deleted_at IS NULL""",
+            list(descendants),
+        ).fetchall()
+        targets = [dict(r) for r in photo_rows]
+
+        if req.pair_with_sidecar and targets:
+            keys = {(r["folder_id"], r["stem"]) for r in targets}
+            seen = {r["path"] for r in targets}
+            placeholders = " OR ".join(["(folder_id=? AND stem=?)"] * len(keys))
+            params: list = []
+            for fid, stem in keys:
+                params.extend([fid, stem])
+            sidecars = conn.execute(
+                f"SELECT id, path, stem, ext, folder_id FROM photos "
+                f"WHERE ({placeholders}) AND deleted_at IS NULL",
+                params,
+            ).fetchall()
+            for s in sidecars:
+                if s["path"] not in seen:
+                    targets.append(dict(s))
+                    seen.add(s["path"])
+
+    base = Path(req.dest_dir).expanduser().resolve()
+    if not base.exists():
+        raise HTTPException(400, f"destination base does not exist: {base}")
+    if not base.is_dir():
+        raise HTTPException(400, f"destination is not a directory: {base}")
+    subfolder = (req.subfolder_name or tag_name).strip().replace("/", "_") or tag_name
+    dest = base / subfolder
+    dest.mkdir(parents=True, exist_ok=True)
+
+    successes: list[dict] = []
+    failures: list[dict] = []
+    for rec in targets:
+        src = Path(rec["path"])
+        if not src.exists():
+            failures.append({**rec, "error": "source missing"}); continue
+        if src.resolve() == dest.resolve() / src.name:
+            successes.append({**rec, "new_path": str(src), "skipped": True}); continue
+        dst = dest / src.name
+        if dst.exists():
+            dst = dest / f"{src.stem}_{int(time.time())}{src.suffix}"
+        try:
+            if req.mode == "copy":
+                shutil.copy2(str(src), str(dst))
+            else:
+                shutil.move(str(src), str(dst))
+            successes.append({**rec, "new_path": str(dst)})
+        except Exception as e:
+            failures.append({**rec, "error": f"{type(e).__name__}: {e}"})
+
+    # For 'move' mode, mark moved photos as 'deleted' in tailorbird's DB so
+    # they disappear from views. (Files still exist on disk, just outside the
+    # scanned source folder.) Same convention as the move-to-ToReview flow.
+    if req.mode == "move" and successes:
+        now = time.time()
+        batch_id = uuid.uuid4().hex
+        with tx() as conn:
+            for rec in successes:
+                if rec.get("skipped"):
+                    continue
+                conn.execute(
+                    "INSERT INTO deletion_history(batch_id, photo_id, original_path, deleted_at) VALUES(?, ?, ?, ?)",
+                    (batch_id, rec["id"], rec["path"], now),
+                )
+                conn.execute("UPDATE photos SET deleted_at = ? WHERE id = ?", (now, rec["id"]))
+
+    return {
+        "tag_id": req.tag_id,
+        "tag_name": tag_name,
+        "destination": str(dest),
+        "mode": req.mode,
+        "exported": [r.get("new_path") for r in successes if not r.get("skipped")],
+        "skipped": [r["path"] for r in successes if r.get("skipped")],
+        "failed": failures,
+    }
+
+
+@app.delete("/api/tags/{tag_id}")
+def delete_tag(tag_id: int, children: str = "lift") -> dict:
+    """children='lift' (default): re-parent direct children to this tag's parent;
+       children='orphan': leave children as roots (parent_id NULL);
+       children='cascade': delete all descendants too."""
+    if children not in ("lift", "orphan", "cascade"):
+        raise HTTPException(400, "children must be one of: lift, orphan, cascade")
+    with tx() as conn:
+        row = conn.execute("SELECT parent_id FROM tags WHERE id = ?", (tag_id,)).fetchone()
+        if row is None:
+            raise HTTPException(404, "tag not found")
+        if children == "cascade":
+            desc = _descendant_tag_ids(conn, [tag_id])
+            if desc:
+                ph = ",".join(["?"] * len(desc))
+                conn.execute(f"DELETE FROM photo_tags WHERE tag_id IN ({ph})", list(desc))
+                conn.execute(f"DELETE FROM tags WHERE id IN ({ph})", list(desc))
+        else:
+            new_parent = row["parent_id"] if children == "lift" else None
+            conn.execute("UPDATE tags SET parent_id = ? WHERE parent_id = ?", (new_parent, tag_id))
+            conn.execute("DELETE FROM photo_tags WHERE tag_id = ?", (tag_id,))
+            conn.execute("DELETE FROM tags WHERE id = ?", (tag_id,))
+    return {"deleted": tag_id, "mode": children}
+
+
+@app.post("/api/photo-tags/batch")
+def batch_photo_tags(req: PhotoTagsBatchReq) -> dict:
+    """Attach/detach tags on a set of shots (input is primary photo_ids;
+    backend expands to all live siblings sharing the same stem, so ARW+HIF
+    move together). add_tag_names creates tags on the fly."""
+    import time
+    if not req.photo_ids:
+        raise HTTPException(400, "photo_ids is empty")
+    created_ids: list[int] = []
+    with tx() as conn:
+        sibling_ids = _expand_to_siblings(conn, req.photo_ids)
+        if not sibling_ids:
+            return {"attached": 0, "detached": 0, "created_tag_ids": [], "affected_photo_ids": []}
+
+        add_ids = set(req.add_tag_ids)
+        for raw in req.add_tag_names:
+            name = raw.strip()
+            if not name:
+                continue
+            if "/" in name:
+                # Slash-separated path: build intermediate tree nodes as needed,
+                # attach the leaf to the photo. Newly-created tags are reported.
+                before = set(r[0] for r in conn.execute("SELECT id FROM tags").fetchall())
+                leaf_id = _resolve_tag_path(conn, name, create_missing=True)
+                if leaf_id is not None:
+                    add_ids.add(leaf_id)
+                    after = set(r[0] for r in conn.execute("SELECT id FROM tags").fetchall())
+                    created_ids.extend(sorted(after - before))
+            else:
+                row = conn.execute("SELECT id FROM tags WHERE name = ? COLLATE NOCASE", (name,)).fetchone()
+                if row:
+                    add_ids.add(row["id"])
+                else:
+                    cur = conn.execute(
+                        "INSERT INTO tags (name, created_at) VALUES (?, ?)",
+                        (name, time.time()),
+                    )
+                    add_ids.add(cur.lastrowid)
+                    created_ids.append(cur.lastrowid)
+
+        attached = 0
+        for pid in sibling_ids:
+            for tid in add_ids:
+                cur = conn.execute(
+                    "INSERT OR IGNORE INTO photo_tags (photo_id, tag_id) VALUES (?, ?)",
+                    (pid, tid),
+                )
+                attached += cur.rowcount
+
+        detached = 0
+        if req.remove_tag_ids:
+            placeholders_p = ",".join(["?"] * len(sibling_ids))
+            placeholders_t = ",".join(["?"] * len(req.remove_tag_ids))
+            cur = conn.execute(
+                f"DELETE FROM photo_tags WHERE photo_id IN ({placeholders_p}) AND tag_id IN ({placeholders_t})",
+                [*sibling_ids, *req.remove_tag_ids],
+            )
+            detached = cur.rowcount
+
+    return {
+        "attached": attached,
+        "detached": detached,
+        "created_tag_ids": created_ids,
+        "affected_photo_ids": sibling_ids,
+    }
+
+
 @app.get("/api/presets")
 def list_presets() -> dict:
     return {"presets": SKILL_PRESETS, "default": DEFAULT_SKILL}
@@ -426,6 +941,53 @@ def apply_preset(req: ApplyPresetReq) -> dict:
     for fid in fids:
         _apply_ratings(fid, skill=req.preset)
     return {"applied": req.preset, "folders": len(fids)}
+
+
+@app.delete("/api/folders/{folder_id}")
+def delete_folder(folder_id: int) -> dict:
+    """Remove a folder from tailorbird (DB records + thumbnail cache).
+    Does NOT touch the original photo files on disk."""
+    import os
+    with tx() as conn:
+        row = conn.execute("SELECT id, path FROM folders WHERE id = ?", (folder_id,)).fetchone()
+        if row is None:
+            raise HTTPException(404, "folder not found")
+        folder_path = row["path"]
+        thumb_rows = conn.execute(
+            "SELECT thumb_path FROM photos WHERE folder_id = ? AND thumb_path IS NOT NULL",
+            (folder_id,),
+        ).fetchall()
+        photo_count = conn.execute(
+            "SELECT COUNT(*) FROM photos WHERE folder_id = ?", (folder_id,),
+        ).fetchone()[0]
+        # photo_tags + deletion_history cleanup via subquery
+        conn.execute(
+            "DELETE FROM photo_tags WHERE photo_id IN (SELECT id FROM photos WHERE folder_id = ?)",
+            (folder_id,),
+        )
+        conn.execute(
+            "DELETE FROM deletion_history WHERE photo_id IN (SELECT id FROM photos WHERE folder_id = ?)",
+            (folder_id,),
+        )
+        conn.execute("DELETE FROM photos WHERE folder_id = ?", (folder_id,))
+        conn.execute("DELETE FROM folders WHERE id = ?", (folder_id,))
+    # Best-effort thumbnail cleanup (don't fail the request if removal fails)
+    removed_thumbs = 0
+    for r in thumb_rows:
+        tp = r["thumb_path"]
+        if not tp:
+            continue
+        try:
+            if os.path.exists(tp):
+                os.remove(tp); removed_thumbs += 1
+        except Exception:
+            pass
+    return {
+        "deleted_folder_id": folder_id,
+        "path": folder_path,
+        "photos_removed": photo_count,
+        "thumbs_removed": removed_thumbs,
+    }
 
 
 @app.get("/api/folders")
@@ -563,6 +1125,51 @@ def annotate(req: AnnotateReq) -> dict:
 
 class OpenFolderReq(BaseModel):
     path: str
+
+
+@app.post("/api/pick-folder")
+def pick_folder() -> dict:
+    """Launch the native macOS folder picker. Returns the chosen absolute path,
+    or {canceled: true} if the user dismissed the dialog. Local-only convenience."""
+    import subprocess
+    try:
+        r = subprocess.run(
+            ["osascript", "-e",
+             'POSIX path of (choose folder with prompt "选择照片目录")'],
+            capture_output=True, text=True, timeout=120,
+        )
+    except Exception as e:
+        raise HTTPException(500, f"picker failed: {type(e).__name__}: {e}")
+    if r.returncode != 0:
+        # User canceled — osascript returns non-zero on cancel.
+        return {"path": None, "canceled": True}
+    path = r.stdout.strip().rstrip("/")
+    return {"path": path or None, "canceled": False}
+
+
+class RevealReq(BaseModel):
+    photo_id: int
+
+
+@app.post("/api/reveal")
+def reveal_in_finder(req: RevealReq) -> dict:
+    """Open Finder with the photo's file highlighted. macOS `open -R`."""
+    import subprocess
+    with tx() as conn:
+        row = conn.execute(
+            "SELECT path FROM photos WHERE id = ? AND deleted_at IS NULL",
+            (req.photo_id,),
+        ).fetchone()
+    if not row:
+        raise HTTPException(404, "photo not found")
+    path = Path(row["path"])
+    if not path.exists():
+        raise HTTPException(404, f"file missing on disk: {path}")
+    try:
+        subprocess.run(["open", "-R", str(path)], check=True, timeout=5)
+        return {"revealed": str(path)}
+    except Exception as e:
+        raise HTTPException(500, f"open failed: {type(e).__name__}: {e}")
 
 
 @app.post("/api/open-folder")
