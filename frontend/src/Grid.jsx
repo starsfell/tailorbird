@@ -40,6 +40,14 @@ export function Grid({ shots, selected, setSelected, onOpen }) {
     })
   }
 
+  const selectGroupAll = (group) => {
+    setSelected(prev => {
+      const next = new Set(prev)
+      for (const s of group.shots) next.add(s.primary_id)
+      return next
+    })
+  }
+
   return (
     <div className="grid-grouped">
       {groups.map(g => (
@@ -51,7 +59,10 @@ export function Grid({ shots, selected, setSelected, onOpen }) {
                 : `组 #${g.cid} · ${g.shots.length} 张${g.shots.length > 1 ? '(连拍)' : ''}`}
             </span>
             {g.shots.length > 1 && (
-              <button onClick={() => selectGroupNonBest(g)}>选中本组非最佳</button>
+              <>
+                <button onClick={() => selectGroupAll(g)} title="选中本组全部">全选本组</button>
+                <button onClick={() => selectGroupNonBest(g)}>选中本组非最佳</button>
+              </>
             )}
           </div>
           <div className="grid">

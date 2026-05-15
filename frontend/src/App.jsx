@@ -25,12 +25,14 @@ export default function App() {
   const [tab, setTab] = useState('grid')
   const [scanStatus, setScanStatus] = useState(null)
   const [shots, setShots] = useState([])
+  const [shotsBeforeTagFilter, setShotsBeforeTagFilter] = useState([])
   const [total, setTotal] = useState(0)
   const [selected, setSelected] = useState(new Set())
   const [filter, setFilter] = useState({ min_sharpness: 0, only_cluster_best: false, min_stars: 0, only_pick: false })
   const [category, setCategory] = useState(null)   // 'no-bird' | 'oof' | 'over' | 'under' | 'zero' | 'flying' | 'best-focus' | null
   const [tagFilter, setTagFilter] = useState(new Set())   // Set<tag_id>
   const [tagFilterMode, setTagFilterMode] = useState('or')   // 'or' | 'and'
+  const [tagFilterNegate, setTagFilterNegate] = useState(false)  // 开启后:显示"不含这些标签"的 shot
   const [allTags, setAllTags] = useState([])
   const [tagsTick, setTagsTick] = useState(0)
   const [tagPanelExpanded, setTagPanelExpanded] = useState(() => {
@@ -72,21 +74,21 @@ export default function App() {
       else if (category === 'zero') items = items.filter(s => s.rating === 0)
       else if (category === 'flying') items = items.filter(s => s.is_flying)
       else if (category === 'best-focus') items = items.filter(s => s.focus_weight != null && s.focus_weight >= 1.05)
+      setShotsBeforeTagFilter(items)
       if (tagFilter.size > 0) {
-        if (tagFilterMode === 'and') {
-          items = items.filter(s => {
-            const ids = new Set((s.tags || []).map(t => t.id))
-            for (const id of tagFilter) if (!ids.has(id)) return false
-            return true
-          })
-        } else {
-          items = items.filter(s => (s.tags || []).some(t => tagFilter.has(t.id)))
+        const matchAnd = (s) => {
+          const ids = new Set((s.tags || []).map(t => t.id))
+          for (const id of tagFilter) if (!ids.has(id)) return false
+          return true
         }
+        const matchOr = (s) => (s.tags || []).some(t => tagFilter.has(t.id))
+        const match = tagFilterMode === 'and' ? matchAnd : matchOr
+        items = items.filter(s => tagFilterNegate ? !match(s) : match(s))
       }
       setShots(items)
       setTotal(r.total)
     } catch (e) { console.error(e) }
-  }, [folder, filter, category, tagFilter, tagFilterMode])
+  }, [folder, filter, category, tagFilter, tagFilterMode, tagFilterNegate])
 
   useEffect(() => { refreshFolders() }, [refreshFolders])
   useEffect(() => { refreshShots() }, [refreshShots])
@@ -537,8 +539,12 @@ export default function App() {
           setTagFilter={setTagFilter}
           filterMode={tagFilterMode}
           setFilterMode={setTagFilterMode}
+          negate={tagFilterNegate}
+          setNegate={setTagFilterNegate}
           onTagsChanged={() => setTagsTick(t => t + 1)}
           countsByTag={countsByTag}
+          viewCount={shots.length}
+          onSelectAllInView={() => setSelected(new Set(shots.map(s => s.primary_id)))}
         />
         </>)}
       </div>

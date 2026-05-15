@@ -121,6 +121,15 @@ input:focus { border-color: var(--accent); }
   flex: 1; padding: 3px 6px; font-size: 11px;
   background: transparent; border: 1px solid var(--border);
 }
+.tag-panel .panel-actions {
+  display: flex; gap: 6px; margin: 6px 0 8px;
+}
+.tag-panel .panel-actions button {
+  flex: 1; padding: 4px 6px; font-size: 11px;
+}
+.tag-panel .panel-mode button.negate.active {
+  background: #e85a5a; color: #fff; border-color: #e85a5a;
+}
 .tag-panel .panel-mode button.active {
   background: var(--accent); color: #0a1612; border-color: var(--accent);
 }

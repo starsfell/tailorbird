@@ -188,8 +188,11 @@ export function TagFilterPanel({
   expanded, setExpanded,
   allTags, tagFilter, setTagFilter,
   filterMode, setFilterMode,
+  negate, setNegate,
   onTagsChanged,
   countsByTag,
+  viewCount,
+  onSelectAllInView,
 }) {
   const [q, setQ] = useState('')
   const [ctx, setCtx] = useState(null)
@@ -257,7 +260,24 @@ export function TagFilterPanel({
         <div className="panel-mode">
           <button className={filterMode === 'or' ? 'active' : ''} onClick={() => setFilterMode('or')} title="任一命中">任一</button>
           <button className={filterMode === 'and' ? 'active' : ''} onClick={() => setFilterMode('and')} title="全部命中">全部</button>
+          <button
+            className={'negate' + (negate ? ' active' : '')}
+            onClick={() => setNegate?.(!negate)}
+            disabled={tagFilter.size === 0}
+            title={tagFilter.size === 0
+              ? '先选一个或多个标签,再点排除会反过来:只显示不含这些标签的 shot'
+              : (negate ? '当前在排除模式:点击切回正常显示' : '排除:只显示不含已选标签的 shot(把已打标的隐藏)')}
+          >{negate ? '✓ 排除' : '排除'}</button>
         </div>
+        {onSelectAllInView && (
+          <div className="panel-actions">
+            <button
+              onClick={onSelectAllInView}
+              disabled={!viewCount}
+              title="选中当前筛后所有 shot"
+            >全选 {viewCount ? `(${viewCount})` : ''}</button>
+          </div>
+        )}
         {tagFilter.size > 0 && (
           <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', margin:'6px 0'}}>
             <span style={{fontSize:11, color:'var(--muted)'}}>已选 {tagFilter.size}</span>

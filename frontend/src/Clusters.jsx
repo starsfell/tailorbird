@@ -35,6 +35,14 @@ export function Clusters({ shots, selected, setSelected, onOpen }) {
     })
   }
 
+  const selectGroupAll = (group) => {
+    setSelected(prev => {
+      const next = new Set(prev)
+      for (const s of group.shots) next.add(s.primary_id)
+      return next
+    })
+  }
+
   if (groups.length === 0) {
     return <div className="empty">没有检测到多张连拍组。</div>
   }
@@ -48,6 +56,7 @@ export function Clusters({ shots, selected, setSelected, onOpen }) {
         <div key={g.cid} style={{marginBottom:12}}>
           <div className="cluster-head">
             <span>组 #{g.cid} · {g.shots.length} 张</span>
+            <button onClick={() => selectGroupAll(g)} title="选中本组全部">全选本组</button>
             <button onClick={() => selectNonBest(g)}>选中本组非最佳</button>
           </div>
           <div className="cluster-row">
