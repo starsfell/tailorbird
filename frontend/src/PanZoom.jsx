@@ -85,8 +85,13 @@ export function PanZoom({
     const rect = wrapRef.current.getBoundingClientRect()
     const cx = e.clientX - rect.left - rect.width / 2
     const cy = e.clientY - rect.top - rect.height / 2
+    // Mac 触摸板 pinch 在浏览器里以 wheel + ctrlKey 形式出现，deltaY 通常是个位数；
+    // 普通鼠标滚轮 deltaY 是 ~100 量级。两者用同一个系数会让 pinch 慢得离谱。
+    const isPinch = e.ctrlKey
+    const k = isPinch
+      ? Math.exp(-e.deltaY * 0.02)
+      : Math.exp(-e.deltaY * 0.0025)
     setT(prev => {
-      const k = Math.exp(-e.deltaY * 0.0015)
       const ns = Math.min(20, Math.max(0.2, prev.scale * k))
       const ratio = ns / prev.scale
       return {
