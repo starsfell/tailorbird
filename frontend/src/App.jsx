@@ -156,12 +156,13 @@ export default function App() {
     } catch (e) { alert('预设应用失败: ' + e.message) }
   }
 
+  // 返回 true = 文件已处理；false = 用户取消或失败。调用方据此决定是否更新本地 UI 状态。
   const onDelete = async (overrideIds) => {
     const ids = overrideIds ? Array.from(overrideIds) : Array.from(selected)
-    if (ids.length === 0) return
+    if (ids.length === 0) return false
     const verb = deleteMode === 'move' ? `移到 "${subfolderName}" 子文件夹` : '送入废纸篓'
     const ok = window.confirm(`将 ${ids.length} 张${verb}${pairDelete ? '(含 ARW/HIF 配对)' : ''}?`)
-    if (!ok) return
+    if (!ok) return false
     try {
       const r = await api.deletePhotos(ids, pairDelete, deleteMode, subfolderName)
       setSelected(prev => { const next = new Set(prev); ids.forEach(i => next.delete(i)); return next })
@@ -169,7 +170,8 @@ export default function App() {
       setSimilarTick(t => t + 1)
       const failed = r.failed?.length || 0
       if (failed) alert(`完成,${failed} 失败`)
-    } catch (e) { alert('删除失败: ' + e.message) }
+      return true
+    } catch (e) { alert('删除失败: ' + e.message); return false }
   }
 
   const onWriteXmp = async () => {
@@ -238,7 +240,8 @@ export default function App() {
     : ''
 
   const handleDetailDelete = async (shot) => {
-    await onDelete([shot.primary_id])
+    const ok = await onDelete([shot.primary_id])
+    if (!ok) return
     setDetail(prev => {
       if (!prev) return null
       const newList = prev.list.filter(s => s.primary_id !== shot.primary_id)
@@ -246,7 +249,8 @@ export default function App() {
     })
   }
   const handleCompareDelete = async (shot) => {
-    await onDelete([shot.primary_id])
+    const ok = await onDelete([shot.primary_id])
+    if (!ok) return
     setCompare(prev => prev ? prev.filter(s => s.primary_id !== shot.primary_id) : null)
   }
 
@@ -266,7 +270,8 @@ export default function App() {
   const handleCompareBatchDelete = async (shotList) => {
     const ids = shotList.map(s => s.primary_id)
     if (ids.length === 0) return
-    await onDelete(ids)
+    const ok = await onDelete(ids)
+    if (!ok) return
     setCompare(prev => prev ? prev.filter(s => !ids.includes(s.primary_id)) : null)
   }
 

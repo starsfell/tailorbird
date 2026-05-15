@@ -415,6 +415,8 @@ sqlite3 data/tailorbird.db "SELECT rating, COUNT(*) FROM photos WHERE deleted_at
 | 对比视图无鸟图黑屏 | 老版本 bug,已修复:无鸟图现在以图心为锚点参与联动;若仍黑,Cmd+Shift+R 强刷 |
 | HF 模型下载失败,SSL 错误 | 装 `socksio`:`pip install socksio`,然后再试一次 `python scripts/download_models.py` |
 | 点 .app 没反应 / Chrome 不开 | 检查端口:`lsof -i :7891`。后端还在就跑 `scripts/quit_prod.sh` 再点 .app;日志在 `/tmp/tailorbird.log` |
+| 双击 .app 后日志报 `npm: command not found` | Finder 启动的 shell 不加载 `~/.zshrc`,PATH 里没有 brew。`scripts/start_prod.sh` 顶部已 `export PATH="/opt/homebrew/bin:..."`,如果你装的 npm 不在那里,改成你自己的路径 |
+| 改前端代码后 .app 启动一直卡 | 启动脚本在前端源码比 `frontend/dist/` 新时会自动 rebuild。手动加速:`cd frontend && npm run build` 一次,下次启动直接走缓存 |
 | 改了 SVG 重生成图标后 /Applications 里还是旧的 | macOS 系统级 icon cache 没刷,跑 `sudo rm -rf /Library/Caches/com.apple.iconservices.store && sudo killall iconservicesd Dock Finder`;注意 `/Applications/tailorbird.app` 是独立拷贝,`build_icon.sh` 会同步两份 |
 
 ---

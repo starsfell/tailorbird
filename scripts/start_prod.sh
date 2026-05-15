@@ -10,6 +10,10 @@ PORT=7891
 PYBIN="/opt/homebrew/Caskroom/miniconda/base/envs/tailorbird/bin/python"
 LOG="/tmp/tailorbird.log"
 
+# 从 Finder 双击 .app 启动时不会加载 .zshrc，PATH 里没有 brew 的 npm/node。
+# 显式把 homebrew 路径加上，否则前端 rebuild 会失败。
+export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+
 if [ ! -x "$PYBIN" ]; then
   echo "未找到 tailorbird conda 环境的 Python: $PYBIN" >&2
   exit 1

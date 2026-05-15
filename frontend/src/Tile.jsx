@@ -37,10 +37,13 @@ export function Tile({ shot, selected, onToggle, onOpen, showTags = false }) {
       </div>
       <div className="meta">
         <span className="badge">{shot.formats.join('+')}</span>
-        <span className="badge sharp" title="眼部锐度 / 主体锐度">
-          {eyeLabel || sharpLabel}
+        <span className="stem" title={shot.stem}>{shot.stem}</span>
+        <span className="meta-right">
+          <span className="badge sharp" title="眼部锐度 / 主体锐度">
+            {eyeLabel || sharpLabel}
+          </span>
+          {aesLabel && <span className="badge aes" title="TOPIQ 美学">{aesLabel}</span>}
         </span>
-        {aesLabel && <span className="badge aes" title="TOPIQ 美学">{aesLabel}</span>}
       </div>
       {conf != null && conf > 0 && (
         <span className="bird-conf" title="鸟检测置信度">{Math.round(conf * 100)}%</span>

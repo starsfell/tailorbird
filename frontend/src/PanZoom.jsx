@@ -79,18 +79,11 @@ export function PanZoom({
   }, [recalcBase, src])
 
   // --- normal pan/zoom handlers ---
-  const onWheel = (e) => {
-    if (annotateMode) return
-    e.preventDefault()
+  // 放大/缩小到指定屏幕坐标 (clientX, clientY)
+  const zoomAt = useCallback((clientX, clientY, k) => {
     const rect = wrapRef.current.getBoundingClientRect()
-    const cx = e.clientX - rect.left - rect.width / 2
-    const cy = e.clientY - rect.top - rect.height / 2
-    // Mac 触摸板 pinch 在浏览器里以 wheel + ctrlKey 形式出现，deltaY 通常是个位数；
-    // 普通鼠标滚轮 deltaY 是 ~100 量级。两者用同一个系数会让 pinch 慢得离谱。
-    const isPinch = e.ctrlKey
-    const k = isPinch
-      ? Math.exp(-e.deltaY * 0.02)
-      : Math.exp(-e.deltaY * 0.0025)
+    const cx = clientX - rect.left - rect.width / 2
+    const cy = clientY - rect.top - rect.height / 2
     setT(prev => {
       const ns = Math.min(20, Math.max(0.2, prev.scale * k))
       const ratio = ns / prev.scale
@@ -100,6 +93,44 @@ export function PanZoom({
         y: cy - (cy - prev.y) * ratio,
       }
     })
+  }, [setT])
+
+  const onWheel = (e) => {
+    if (annotateMode) return
+    e.preventDefault()
+    // Mac 触摸板 pinch 在 Chrome/Edge 下以 wheel + ctrlKey 形式出现，deltaY 通常 <10；
+    // 普通鼠标滚轮 deltaY 是 ~100 量级；触摸板二指滚动 deltaY 中等，无 ctrlKey。
+    // 三档系数避免 pinch 被普通滚轮的系数压得几乎不动。
+    const isPinch = e.ctrlKey
+    const absDy = Math.abs(e.deltaY)
+    let factor
+    if (isPinch) factor = 0.20            // Chrome trackpad pinch（deltaY 常 <2）
+    else if (absDy < 50) factor = 0.015   // 触摸板二指滑动
+    else factor = 0.0035                   // 鼠标滚轮
+    const k = Math.exp(-e.deltaY * factor)
+    zoomAt(e.clientX, e.clientY, k)
+  }
+
+  // Safari pinch 走 gesture 事件而不是 wheel；e.scale 是累计缩放因子。
+  const gestureRef = useRef(null)
+  const onGestureStart = (e) => {
+    if (annotateMode) return
+    e.preventDefault()
+    gestureRef.current = { lastScale: e.scale || 1, x: e.clientX, y: e.clientY }
+  }
+  const onGestureChange = (e) => {
+    if (annotateMode || !gestureRef.current) return
+    e.preventDefault()
+    const g = gestureRef.current
+    const cur = e.scale || 1
+    const k = cur / g.lastScale
+    g.lastScale = cur
+    zoomAt(e.clientX || g.x, e.clientY || g.y, k)
+  }
+  const onGestureEnd = (e) => {
+    if (annotateMode) return
+    e.preventDefault()
+    gestureRef.current = null
   }
 
   // --- annotation handlers ---
@@ -166,7 +197,15 @@ export function PanZoom({
     const el = wrapRef.current
     if (!el) return
     el.addEventListener('wheel', onWheel, { passive: false })
-    return () => el.removeEventListener('wheel', onWheel)
+    el.addEventListener('gesturestart', onGestureStart, { passive: false })
+    el.addEventListener('gesturechange', onGestureChange, { passive: false })
+    el.addEventListener('gestureend', onGestureEnd, { passive: false })
+    return () => {
+      el.removeEventListener('wheel', onWheel)
+      el.removeEventListener('gesturestart', onGestureStart)
+      el.removeEventListener('gesturechange', onGestureChange)
+      el.removeEventListener('gestureend', onGestureEnd)
+    }
     // eslint-disable-next-line
   }, [t, annotateMode])
 
