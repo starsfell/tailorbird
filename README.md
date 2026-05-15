@@ -154,8 +154,11 @@ pick = 1 ⇔ rating == 3 且分数在所有 3 星中位于 top 25%
 ```bash
 # 1. 双击 .app(日常使用)
 #    第一次:把 tailorbird.app 拖到 /Applications,然后 Launchpad / Spotlight 搜 "tailorbird"
-#    内部会自动 build 前端 + 起后端 + 开浏览器;Cmd-Q 干净退出
+#    内部会自动 build 前端 + 起后端(detach 到后台)+ 在 Chrome 里全屏开浏览器
 open /Applications/tailorbird.app
+
+# 退出后端
+./scripts/quit_prod.sh                # 或者 lsof -ti :7891 | xargs kill
 
 # 2. 生产模式(命令行版,等价于 .app 内部跑的)
 #    单端口 7891,前端由 FastAPI 静态托管,改前端要重新 build(脚本会自动判断)
@@ -179,7 +182,9 @@ cd frontend && npm run dev                                     # 终端 2
 
 ### tailorbird.app 是怎么打包的
 
-不是 Tauri/Electron,就是手写的 macOS bundle:`Contents/MacOS/tailorbird` 一行 `exec` 调 `scripts/start_prod.sh`,`Contents/Resources/AppIcon.icns` 由 `assets/AppIcon.svg` 生成。`ROOT` 在 launcher 里写死成项目绝对路径——所以**项目目录别改名/搬位置**;真要搬,改一下 `tailorbird.app/Contents/MacOS/tailorbird` 里那行 `ROOT=` 就行。Cmd-Q 通过 SIGTERM 关 uvicorn,端口自动释放。
+不是 Tauri/Electron,就是手写的 macOS bundle:`Contents/MacOS/tailorbird` 一行 `exec` 调 `scripts/start_prod.sh`,`Contents/Resources/AppIcon.icns` 由 `assets/AppIcon.svg` 走 `scripts/build_icon.sh` 生成(遵循 macOS Big Sur+ icon grid:tile 824×824 居中,rx=185)。`ROOT` 在 launcher 里写死成项目绝对路径——所以**项目目录别改名/搬位置**;真要搬,改一下 `tailorbird.app/Contents/MacOS/tailorbird` 里那行 `ROOT=` 就行。
+
+`start_prod.sh` 用 `nohup … & disown` 把 uvicorn 放到后台,launcher 进程立即退出 —— 这样 macOS 不会把 bundle 锁成"运行中",反复点图标都能可靠地把 Chrome 拉到前台并最大化(`scripts/open_browser.sh` 用 Cocoa `visibleFrame` 算可用区域,避开菜单栏和 Dock)。代价是 Dock → Quit 失效,退出后端跑 `scripts/quit_prod.sh`。日志 `>>/tmp/tailorbird.log`。
 
 ---
 
@@ -267,7 +272,10 @@ tailorbird/
 │       └── Resources/AppIcon.icns   多尺寸图标 (16~1024 + @2x)
 └── scripts/
     ├── start.sh                     开发模式: 后端 + 前端两个端口
-    └── start_prod.sh                生产模式: 单端口,前端 build 后由 FastAPI 托管
+    ├── start_prod.sh                生产模式: 单端口,前端 build 后由 FastAPI 托管,uvicorn detach
+    ├── quit_prod.sh                 停 prod 后端 (kill 占 7891 的进程)
+    ├── open_browser.sh              在 Chrome 里打开 + 拉到屏幕可用区域 (避开菜单栏/Dock)
+    └── build_icon.sh                从 AppIcon.svg 重新生成 .icns 并装回两份 .app + 清 icon cache
 ```
 
 ---
@@ -406,6 +414,8 @@ sqlite3 data/tailorbird.db "SELECT rating, COUNT(*) FROM photos WHERE deleted_at
 | 详情视图打不开 | 看后端有没有报「rawpy can't extract thumb」;有些第三方 RAW 没有内嵌全分辨率预览 |
 | 对比视图无鸟图黑屏 | 老版本 bug,已修复:无鸟图现在以图心为锚点参与联动;若仍黑,Cmd+Shift+R 强刷 |
 | HF 模型下载失败,SSL 错误 | 装 `socksio`:`pip install socksio`,然后再试一次 `python scripts/download_models.py` |
+| 点 .app 没反应 / Chrome 不开 | 检查端口:`lsof -i :7891`。后端还在就跑 `scripts/quit_prod.sh` 再点 .app;日志在 `/tmp/tailorbird.log` |
+| 改了 SVG 重生成图标后 /Applications 里还是旧的 | macOS 系统级 icon cache 没刷,跑 `sudo rm -rf /Library/Caches/com.apple.iconservices.store && sudo killall iconservicesd Dock Finder`;注意 `/Applications/tailorbird.app` 是独立拷贝,`build_icon.sh` 会同步两份 |
 
 ---
 
