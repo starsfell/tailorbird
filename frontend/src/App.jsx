@@ -7,8 +7,10 @@ import { Compare } from './Compare.jsx'
 import { SimilarView } from './SimilarView.jsx'
 import { TagBatchDialog } from './TagBatchDialog.jsx'
 import { TagFilterPanel } from './TagFilterPanel.jsx'
+import { ExifPanel } from './ExifPanel.jsx'
 import { TagCenterView } from './TagCenterView.jsx'
 import { TriageView } from './TriageView.jsx'
+import { StackDialog } from './StackDialog.jsx'
 
 const PHASE_LABEL = {
   idle: '空闲',
@@ -41,6 +43,22 @@ export default function App() {
   useEffect(() => {
     try { localStorage.setItem('tagPanelExpanded', tagPanelExpanded ? '1' : '0') } catch {}
   }, [tagPanelExpanded])
+  const [exifPanelExpanded, setExifPanelExpanded] = useState(() => {
+    try { return localStorage.getItem('exifPanelExpanded') !== '0' } catch { return true }
+  })
+  useEffect(() => {
+    try { localStorage.setItem('exifPanelExpanded', exifPanelExpanded ? '1' : '0') } catch {}
+  }, [exifPanelExpanded])
+  const [statusFilter, setStatusFilter] = useState(new Set())   // Set<string> of STATUS_GROUPS ids
+  const [statusCounts, setStatusCounts] = useState({})            // {[id]: number}
+  const [sortBy, setSortBy] = useState(() => {
+    try { return localStorage.getItem('sortBy') || 'shot_at' } catch { return 'shot_at' }
+  })
+  const [sortOrder, setSortOrder] = useState(() => {
+    try { return localStorage.getItem('sortOrder') || 'asc' } catch { return 'asc' }
+  })
+  useEffect(() => { try { localStorage.setItem('sortBy', sortBy) } catch {} }, [sortBy])
+  useEffect(() => { try { localStorage.setItem('sortOrder', sortOrder) } catch {} }, [sortOrder])
   const [busy, setBusy] = useState(false)
   const [pairDelete, setPairDelete] = useState(true)
   const [deleteMode, setDeleteMode] = useState('move')  // 'trash' | 'move' (move is safer)
@@ -51,6 +69,7 @@ export default function App() {
   const [compare, setCompare] = useState(null)
   const [similarTick, setSimilarTick] = useState(0)   // bump to force SimilarView re-fetch
   const [tagDialogIds, setTagDialogIds] = useState(null)  // Set<id> | null
+  const [stackDialogOpen, setStackDialogOpen] = useState(false)
 
   const refreshFolders = useCallback(async () => {
     try {
@@ -63,7 +82,7 @@ export default function App() {
   const refreshShots = useCallback(async () => {
     if (!folder) return
     try {
-      const r = await api.listShots({ folder, min_sharpness: filter.min_sharpness, only_cluster_best: filter.only_cluster_best, limit: 5000, include_deleted: false })
+      const r = await api.listShots({ folder, min_sharpness: filter.min_sharpness, only_cluster_best: filter.only_cluster_best, sort_by: sortBy, sort_order: sortOrder, limit: 5000, include_deleted: false })
       let items = r.items
       if (filter.min_stars > 0) items = items.filter(s => (s.rating ?? -1) >= filter.min_stars)
       if (filter.only_pick) items = items.filter(s => s.pick)
@@ -74,6 +93,43 @@ export default function App() {
       else if (category === 'zero') items = items.filter(s => s.rating === 0)
       else if (category === 'flying') items = items.filter(s => s.is_flying)
       else if (category === 'best-focus') items = items.filter(s => s.focus_weight != null && s.focus_weight >= 1.05)
+      // Counts shown next to status rows are computed BEFORE statusFilter is
+      // applied, so toggling one doesn't zero out the others.
+      const counts = { 'star-3':0,'star-2':0,'star-1':0,'star-0':0,'no-bird':0,
+                       pick:0, 'focus-best':0, 'focus-off':0, flying:0, over:0, under:0 }
+      for (const s of items) {
+        if (s.rating === 3) counts['star-3']++
+        else if (s.rating === 2) counts['star-2']++
+        else if (s.rating === 1) counts['star-1']++
+        else if (s.rating === 0) counts['star-0']++
+        else if (s.rating === -1) counts['no-bird']++
+        if (s.pick) counts.pick++
+        if (s.focus_weight != null && s.focus_weight >= 1.05) counts['focus-best']++
+        if (s.focus_weight != null && s.focus_weight < 0.8) counts['focus-off']++
+        if (s.is_flying) counts.flying++
+        if (s.is_over) counts.over++
+        if (s.is_under) counts.under++
+      }
+      setStatusCounts(counts)
+      // Status virtual filters (OR within set — any selected status matches)
+      if (statusFilter.size > 0) {
+        items = items.filter(s => {
+          for (const id of statusFilter) {
+            if (id === 'star-3' && s.rating === 3) return true
+            if (id === 'star-2' && s.rating === 2) return true
+            if (id === 'star-1' && s.rating === 1) return true
+            if (id === 'star-0' && s.rating === 0) return true
+            if (id === 'no-bird' && s.rating === -1) return true
+            if (id === 'pick' && s.pick) return true
+            if (id === 'focus-best' && s.focus_weight != null && s.focus_weight >= 1.05) return true
+            if (id === 'focus-off' && s.focus_weight != null && s.focus_weight < 0.8) return true
+            if (id === 'flying' && s.is_flying) return true
+            if (id === 'over' && s.is_over) return true
+            if (id === 'under' && s.is_under) return true
+          }
+          return false
+        })
+      }
       setShotsBeforeTagFilter(items)
       if (tagFilter.size > 0) {
         const matchAnd = (s) => {
@@ -88,7 +144,7 @@ export default function App() {
       setShots(items)
       setTotal(r.total)
     } catch (e) { console.error(e) }
-  }, [folder, filter, category, tagFilter, tagFilterMode, tagFilterNegate])
+  }, [folder, filter, category, tagFilter, tagFilterMode, tagFilterNegate, statusFilter, sortBy, sortOrder])
 
   useEffect(() => { refreshFolders() }, [refreshFolders])
   useEffect(() => { refreshShots() }, [refreshShots])
@@ -209,6 +265,7 @@ export default function App() {
         if (e.key === 'Escape') { e.preventDefault(); setTagDialogIds(null) }
         return
       }
+      if (stackDialogOpen) return
       if (e.key === 'a' || e.key === 'A') { e.preventDefault(); setSelected(new Set(shots.map(s => s.primary_id))) }
       else if (e.key === 'Escape') { setSelected(new Set()) }
       else if (e.key === 'b' || e.key === 'B') {
@@ -219,6 +276,9 @@ export default function App() {
       else if (e.key === 'c' || e.key === 'C') { e.preventDefault(); openCompare() }
       else if (e.key === 't' || e.key === 'T') {
         if (selected.size > 0) { e.preventDefault(); setTagDialogIds(new Set(selected)) }
+      }
+      else if (e.key === 's' || e.key === 'S') {
+        if (selected.size >= 2) { e.preventDefault(); setStackDialogOpen(true) }
       }
       else if (e.key === 'r' || e.key === 'R') {
         if (selected.size > 0) {
@@ -235,7 +295,7 @@ export default function App() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [shots, selected, detail, compare, tagDialogIds])
+  }, [shots, selected, detail, compare, tagDialogIds, stackDialogOpen])
 
   const statusText = scanStatus
     ? `${PHASE_LABEL[scanStatus.phase] || scanStatus.phase}${scanStatus.total ? ` ${scanStatus.done}/${scanStatus.total}` : ''}`
@@ -408,6 +468,25 @@ export default function App() {
             ))}
           </div>
 
+          <h3 style={{marginTop:20}}>排序</h3>
+          <div className="row">
+            <select value={sortBy} onChange={e => setSortBy(e.target.value)} style={{flex:1}}>
+              <option value="shot_at">拍摄时间</option>
+              <option value="rating">星级</option>
+              <option value="iso">ISO</option>
+              <option value="f_number">光圈</option>
+              <option value="focal_length">焦距</option>
+              <option value="subject_sharpness">主体锐度</option>
+              <option value="eye_sharpness">鸟眼锐度</option>
+              <option value="aesthetic_score">美学</option>
+              <option value="bird_confidence">鸟检置信</option>
+            </select>
+            <button onClick={() => setSortOrder(o => o === 'asc' ? 'desc' : 'asc')}
+              title={sortOrder === 'asc' ? '升序(点切倒序)' : '降序(点切升序)'}
+              style={{minWidth:36}}
+            >{sortOrder === 'asc' ? '↑' : '↓'}</button>
+          </div>
+
           <h3 style={{marginTop:20}}>筛选</h3>
           <div className="row">
             <label>最低星级</label>
@@ -531,21 +610,32 @@ export default function App() {
             <Clusters shots={shots} selected={selected} setSelected={setSelected} onOpen={openDetail} />
           )}
         </main>
-        <TagFilterPanel
-          expanded={tagPanelExpanded}
-          setExpanded={setTagPanelExpanded}
-          allTags={allTags}
-          tagFilter={tagFilter}
-          setTagFilter={setTagFilter}
-          filterMode={tagFilterMode}
-          setFilterMode={setTagFilterMode}
-          negate={tagFilterNegate}
-          setNegate={setTagFilterNegate}
-          onTagsChanged={() => setTagsTick(t => t + 1)}
-          countsByTag={countsByTag}
-          viewCount={shots.length}
-          onSelectAllInView={() => setSelected(new Set(shots.map(s => s.primary_id)))}
-        />
+        <div className="right-stack">
+          <ExifPanel
+            expanded={exifPanelExpanded}
+            setExpanded={setExifPanelExpanded}
+            focusedShot={detail ? detail.list[detail.index] : null}
+            selectedShots={shots.filter(s => selected.has(s.primary_id))}
+          />
+          <TagFilterPanel
+            expanded={tagPanelExpanded}
+            setExpanded={setTagPanelExpanded}
+            allTags={allTags}
+            tagFilter={tagFilter}
+            setTagFilter={setTagFilter}
+            filterMode={tagFilterMode}
+            setFilterMode={setTagFilterMode}
+            negate={tagFilterNegate}
+            setNegate={setTagFilterNegate}
+            onTagsChanged={() => setTagsTick(t => t + 1)}
+            countsByTag={countsByTag}
+            viewCount={shots.length}
+            onSelectAllInView={() => setSelected(new Set(shots.map(s => s.primary_id)))}
+            statusFilter={statusFilter}
+            setStatusFilter={setStatusFilter}
+            statusCounts={statusCounts}
+          />
+        </div>
         </>)}
       </div>
 
@@ -554,6 +644,7 @@ export default function App() {
         <div>已选 {selected.size}</div>
         <div className="spacer" />
         <button onClick={openCompare} disabled={selected.size < 2}>对比 (C)</button>
+        <button onClick={() => setStackDialogOpen(true)} disabled={selected.size < 2}>堆栈 (S)</button>
         <button onClick={() => setTagDialogIds(new Set(selected))} disabled={selected.size === 0}>+ 标签 (T)</button>
         <button onClick={() => setSelected(new Set())} disabled={selected.size === 0}>清空</button>
         <button className="danger" disabled={selected.size === 0} onClick={() => onDelete()}>
@@ -588,6 +679,18 @@ export default function App() {
           selectedIds={tagDialogIds}
           onClose={() => setTagDialogIds(null)}
           onApplied={async () => { await refreshShots(); setTagsTick(t => t + 1) }}
+        />
+      )}
+      {stackDialogOpen && (
+        <StackDialog
+          shots={shots}
+          selectedIds={selected}
+          onClose={() => setStackDialogOpen(false)}
+          onCompareSources={(stackShot, sourceIds) => {
+            const sourceShots = shots.filter(s => sourceIds.has(s.primary_id))
+            setStackDialogOpen(false)
+            setCompare([stackShot, ...sourceShots])
+          }}
         />
       )}
     </div>

@@ -10,10 +10,11 @@ export function buildTagTree(tags) {
       roots.push(node)
     }
   }
-  // Stable in-place sort: favorites first, then name.
+  // Stable in-place sort: favorites first, then name with natural-number
+  // ordering so "ISO 100" < "ISO 1000" < "ISO 12800" and "200mm" < "1000mm".
   const sortByFavName = (a, b) => {
     if ((b.is_favorite || 0) !== (a.is_favorite || 0)) return (b.is_favorite || 0) - (a.is_favorite || 0)
-    return a.name.localeCompare(b.name, 'zh-CN')
+    return a.name.localeCompare(b.name, 'zh-CN', { numeric: true, sensitivity: 'base' })
   }
   const sortRec = (arr) => {
     arr.sort(sortByFavName)

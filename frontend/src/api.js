@@ -31,6 +31,11 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ folder: folder || null, run_ai: runAi, preset }),
     }),
+  backfillExif: (folder, onlyMissing = true) =>
+    req('/api/backfill-exif', {
+      method: 'POST',
+      body: JSON.stringify({ folder: folder || null, only_missing: onlyMissing }),
+    }),
   listPresets: () => req('/api/presets'),
   applyPreset: (folder, preset) =>
     req('/api/presets/apply', {
@@ -50,6 +55,8 @@ export const api = {
     req('/api/open-folder', { method: 'POST', body: JSON.stringify({ path }) }),
   revealInFinder: (photo_id) =>
     req('/api/reveal', { method: 'POST', body: JSON.stringify({ photo_id }) }),
+  revealPath: (path) =>
+    req('/api/reveal-path', { method: 'POST', body: JSON.stringify({ path }) }),
   pickFolder: () => req('/api/pick-folder', { method: 'POST' }),
   exportTag: (tag_id, opts = {}) =>
     req('/api/export-tag', {
@@ -87,4 +94,21 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ photo_ids, add_tag_ids, remove_tag_ids, add_tag_names }),
     }),
+  // ----- stacking -----
+  startStack: ({ photo_ids, anchor_id, source = 'jpeg', mode = 'sigma_clip', align = true, full_size = false }) =>
+    req('/api/stack', {
+      method: 'POST',
+      body: JSON.stringify({ photo_ids, anchor_id, source, mode, align, full_size }),
+    }),
+  stackStatus: (task_id) => {
+    const qs = new URLSearchParams({ task_id })
+    return req('/api/stack/status?' + qs.toString())
+  },
+  stackResultUrl: (task_id, kind = 'full') =>
+    `/api/stack/result/${task_id}?kind=${kind}`,
+  listStacks: () => req('/api/stacks'),
+  stackFileUrl: (name, kind = 'full') => {
+    const qs = new URLSearchParams({ name, kind })
+    return '/api/stacks/file?' + qs.toString()
+  },
 }

@@ -202,6 +202,21 @@ def list_shots(
     tag_ids: Optional[str] = None,    # comma-separated tag ids
     tag_mode: str = "or",             # 'or' | 'and'
     untagged: bool = False,           # only return shots where no sibling has any tag
+    # ── Virtual status filters (post-aggregation; pass none to skip) ──
+    # comma-separated; OR-combined across values. examples:
+    #   ratings=3,2  → keep 3-star or 2-star shots
+    #   ratings=-1   → keep "no bird" shots
+    ratings: Optional[str] = None,
+    pick: Optional[bool] = None,
+    is_flying: Optional[bool] = None,
+    is_over: Optional[bool] = None,
+    is_under: Optional[bool] = None,
+    # focus_state: 'best' (focus_weight >= 1.05) | 'off' (< 0.8) | None
+    focus_state: Optional[str] = None,
+    # Sort: one of shot_at|rating|iso|focal_length|f_number|subject_sharpness|
+    # eye_sharpness|aesthetic_score|bird_confidence; sort_order asc|desc.
+    sort_by: str = "shot_at",
+    sort_order: str = "asc",
     limit: int = 5000,
     offset: int = 0,
 ) -> dict:
@@ -273,6 +288,16 @@ def list_shots(
                 )
                 params.extend(list(all_desc))
 
+    # Whitelist sort columns to prevent SQL injection
+    _SORT_COLS = {
+        "shot_at", "rating", "iso", "focal_length", "f_number",
+        "subject_sharpness", "eye_sharpness", "aesthetic_score", "bird_confidence",
+    }
+    sort_col = sort_by if sort_by in _SORT_COLS else "shot_at"
+    sort_dir = "DESC" if str(sort_order).lower() == "desc" else "ASC"
+    # NULL last in both directions; secondary sort by primary_id for stability
+    order_clause = f"{sort_col} IS NULL, {sort_col} {sort_dir}, primary_id"
+
     sql = f"""
         SELECT
             stem,
@@ -293,13 +318,16 @@ def list_shots(
             MAX(is_under) AS is_under,
             MAX(focus_weight) AS focus_weight,
             MAX(eye_visibility) AS eye_visibility,
+            MAX(iso) AS iso,
+            MAX(f_number) AS f_number,
+            MAX(focal_length) AS focal_length,
             MAX(cluster_id) AS cluster_id,
             MAX(is_cluster_best) AS is_cluster_best,
             MAX(user_mark) AS user_mark
         FROM photos
         WHERE {' AND '.join(where)}
         GROUP BY folder_id, stem
-        ORDER BY shot_at IS NULL, shot_at, primary_id
+        ORDER BY {order_clause}
         LIMIT ? OFFSET ?
     """
     with tx() as conn:
@@ -340,6 +368,26 @@ def list_shots(
                 continue
             if only_cluster_best and not d["is_cluster_best"]:
                 continue
+            # Virtual status filters
+            if ratings:
+                wanted = {int(x) for x in ratings.split(",") if x.strip().lstrip("-").isdigit()}
+                r = d["rating"]
+                if (r is None and -2 not in wanted) or (r is not None and r not in wanted):
+                    continue
+            if pick is not None and bool(d["pick"]) != pick:
+                continue
+            if is_flying is not None and bool(d["is_flying"]) != is_flying:
+                continue
+            if is_over is not None and bool(d["is_over"]) != is_over:
+                continue
+            if is_under is not None and bool(d["is_under"]) != is_under:
+                continue
+            if focus_state:
+                fw = d["focus_weight"]
+                if focus_state == "best":
+                    if fw is None or fw < 1.05: continue
+                elif focus_state == "off":
+                    if fw is None or fw >= 0.8: continue
             import json as _json
             def _maybe_json(v):
                 if not v: return None
@@ -375,6 +423,9 @@ def list_shots(
                     "is_under": bool(d["is_under"]),
                     "focus_weight": d["focus_weight"],
                     "eye_visibility": d["eye_visibility"],
+                    "iso": d["iso"],
+                    "f_number": d["f_number"],
+                    "focal_length": d["focal_length"],
                     "cluster_id": d["cluster_id"],
                     "is_cluster_best": bool(d["is_cluster_best"]),
                     "user_mark": d["user_mark"],
@@ -402,7 +453,9 @@ def get_photo_detail(photo_id: int) -> dict:
         row = conn.execute(
             """SELECT id, path, stem, ext, width, height, shot_at, subject_sharpness,
                       eye_sharpness, aesthetic_score, bird_confidence, bird_bbox, eye_xy,
-                      eye_visibility, focus_point, focus_weight, is_flying, rating, pick,
+                      eye_visibility, focus_point, focus_weight, is_flying,
+                      is_over, is_under, rating, pick,
+                      iso, f_number, exposure_time, focal_length, lens_model, camera_model,
                       cluster_id, is_cluster_best, user_mark, error
                FROM photos WHERE id=?""",
             (photo_id,),
@@ -1172,6 +1225,36 @@ def reveal_in_finder(req: RevealReq) -> dict:
         raise HTTPException(500, f"open failed: {type(e).__name__}: {e}")
 
 
+class RevealPathReq(BaseModel):
+    path: str
+
+
+@app.post("/api/reveal-path")
+def reveal_path(req: RevealPathReq) -> dict:
+    """Reveal an arbitrary file or folder in Finder. If the path is a file,
+    Finder highlights it (`open -R`); if a folder, Finder opens it (`open`).
+    Restricted to paths inside scanned folders so the localhost endpoint
+    can't be abused to open arbitrary locations."""
+    import subprocess
+    target = Path(req.path).expanduser().resolve()
+    if not target.exists():
+        raise HTTPException(404, f"path does not exist: {target}")
+    with tx() as conn:
+        ok = conn.execute(
+            "SELECT 1 FROM folders WHERE ? LIKE path || '%'", (str(target),)
+        ).fetchone()
+    if not ok:
+        raise HTTPException(403, "path is outside any scanned folder")
+    try:
+        if target.is_dir():
+            subprocess.run(["open", str(target)], check=True, timeout=5)
+        else:
+            subprocess.run(["open", "-R", str(target)], check=True, timeout=5)
+        return {"revealed": str(target)}
+    except Exception as e:
+        raise HTTPException(500, f"open failed: {type(e).__name__}: {e}")
+
+
 @app.post("/api/open-folder")
 def open_folder(req: OpenFolderReq) -> dict:
     """Reveal a folder in Finder. Restricted to subpaths of folders we've scanned
@@ -1275,6 +1358,69 @@ def empty_move_target(req: EmptyMoveTargetReq) -> dict:
     }
 
 
+class BackfillExifReq(BaseModel):
+    folder: Optional[str] = None
+    only_missing: bool = True   # skip rows that already have iso AND lens_model
+
+
+@app.post("/api/backfill-exif")
+def backfill_exif(req: BackfillExifReq) -> dict:
+    """Re-read EXIF for already-scanned photos and persist iso/lens/etc. Also
+    runs auto-tagging (creates ISO 100 / lens model tags). Use after schema
+    migration adds new EXIF columns, or after editing EXIF in-place."""
+    from app.core.exif import read_exif
+    from app.core.scanner import _apply_auto_tags, _parse_basic_exif
+
+    folder = _normalize(req.folder)
+    with tx() as conn:
+        if folder:
+            row = conn.execute("SELECT id FROM folders WHERE path=?", (folder,)).fetchone()
+            if not row:
+                raise HTTPException(404, "folder not found")
+            folder_ids = [row["id"]]
+        else:
+            folder_ids = [r["id"] for r in conn.execute("SELECT id FROM folders").fetchall()]
+
+    total = 0
+    updated = 0
+    failed: list[str] = []
+    for fid in folder_ids:
+        with tx() as conn:
+            where = ["folder_id=?", "deleted_at IS NULL"]
+            params: list = [fid]
+            if req.only_missing:
+                where.append("(iso IS NULL AND lens_model IS NULL)")
+            rows = conn.execute(
+                f"SELECT id, path FROM photos WHERE {' AND '.join(where)}",
+                params,
+            ).fetchall()
+        for r in rows:
+            total += 1
+            p = Path(r["path"])
+            if not p.exists():
+                continue
+            try:
+                ex = read_exif(p)
+                basic = _parse_basic_exif(ex)
+                with tx() as conn:
+                    conn.execute(
+                        """UPDATE photos SET
+                             iso=?, f_number=?, exposure_time=?,
+                             focal_length=?, lens_model=?, camera_model=?
+                           WHERE id=?""",
+                        (basic["iso"], basic["f_number"], basic["exposure_time"],
+                         basic["focal_length"], basic["lens_model"], basic["camera_model"],
+                         r["id"]),
+                    )
+                updated += 1
+            except Exception as e:
+                failed.append(f"{p.name}: {type(e).__name__}: {e}")
+        _apply_auto_tags(fid)
+
+    return {"folders": len(folder_ids), "scanned": total, "updated": updated,
+            "failed_count": len(failed), "failed_sample": failed[:5]}
+
+
 class RecomputeReq(BaseModel):
     folder: Optional[str] = None
     run_ai: bool = False
@@ -1326,6 +1472,105 @@ def recompute(req: RecomputeReq) -> dict:
         else:
             _apply_ratings(fid, skill=req.preset)
     return {"recomputed": len(folder_ids), "ai_started": False}
+
+
+# ─── Stacking ────────────────────────────────────────────────────────────────
+from app.core.stacker import StackProgress, run_stack, list_stacks, STACKS_DIR
+
+_stack_tasks: dict[str, StackProgress] = {}
+_stack_lock = threading.Lock()
+
+
+class StackReq(BaseModel):
+    photo_ids: list[int]
+    anchor_id: int
+    source: str = "jpeg"        # 'jpeg' | 'raw'
+    mode: str = "sigma_clip"    # 'mean' | 'median' | 'sigma_clip'
+    align: bool = True
+    full_size: bool = False     # RAW only: full-sensor demosaic vs half-size
+
+
+@app.post("/api/stack")
+def start_stack(req: StackReq) -> dict:
+    if req.source not in ("jpeg", "raw"):
+        raise HTTPException(400, "source must be jpeg or raw")
+    if req.mode not in ("mean", "median", "sigma_clip"):
+        raise HTTPException(400, "mode must be mean | median | sigma_clip")
+    if len(req.photo_ids) < 2:
+        raise HTTPException(400, "need at least 2 photos")
+    if req.anchor_id not in req.photo_ids:
+        raise HTTPException(400, "anchor_id must be in photo_ids")
+
+    import uuid
+    task_id = uuid.uuid4().hex[:12]
+    progress = StackProgress(task_id=task_id, phase="loading", total=len(req.photo_ids))
+    with _stack_lock:
+        _stack_tasks[task_id] = progress
+
+    def _runner() -> None:
+        run_stack(
+            photo_ids=req.photo_ids,
+            anchor_id=req.anchor_id,
+            source=req.source,
+            mode=req.mode,
+            align=req.align,
+            full_size=req.full_size,
+            progress=progress,
+        )
+
+    t = threading.Thread(target=_runner, daemon=True)
+    t.start()
+    return {"task_id": task_id}
+
+
+@app.get("/api/stack/status")
+def stack_status(task_id: str) -> dict:
+    with _stack_lock:
+        p = _stack_tasks.get(task_id)
+    if not p:
+        raise HTTPException(404, "task not found")
+    return asdict(p)
+
+
+@app.get("/api/stack/result/{task_id}")
+def stack_result_image(task_id: str, kind: str = "preview"):
+    """kind=preview (browser-safe JPEG, default) | full (main file, may be TIFF
+    for RAW mode) | thumb (small JPEG)."""
+    with _stack_lock:
+        p = _stack_tasks.get(task_id)
+    if not p:
+        raise HTTPException(404, "task not found")
+    if p.phase != "done":
+        raise HTTPException(409, f"task not done (phase={p.phase})")
+    if kind == "thumb":
+        path = p.result_thumb
+    elif kind == "preview":
+        path = p.result_preview or p.result_path
+    else:
+        path = p.result_path
+    if not path or not Path(path).exists():
+        raise HTTPException(404, "result file missing")
+    suffix = Path(path).suffix.lower()
+    media = "image/tiff" if suffix in (".tif", ".tiff") else "image/jpeg"
+    return FileResponse(path, media_type=media)
+
+
+@app.get("/api/stacks")
+def list_saved_stacks() -> dict:
+    return {"items": list_stacks()}
+
+
+@app.get("/api/stacks/file")
+def get_stack_file(name: str, kind: str = "full"):
+    """Serve a saved stack by filename (under data/stacks/). kind=full|thumb."""
+    safe = Path(name).name  # strip any path components
+    if kind == "thumb":
+        if not safe.endswith("_thumb.jpg"):
+            safe = safe[:-4] + "_thumb.jpg" if safe.endswith(".jpg") else safe + "_thumb.jpg"
+    target = STACKS_DIR / safe
+    if not target.exists():
+        raise HTTPException(404, "stack not found")
+    return FileResponse(str(target), media_type="image/jpeg")
 
 
 _FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"

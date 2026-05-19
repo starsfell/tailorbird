@@ -11,6 +11,8 @@
 - [项目目标](#项目目标)
 - [核心功能](#核心功能)
 - [三种视图](#三种视图)
+- [多帧堆栈降噪](#多帧堆栈降噪)
+- [拍摄参数 + EXIF 面板](#拍摄参数--exif-面板)
 - [0-3 星评分算法](#0-3-星评分算法)
 - [删除与整理](#删除与整理)
 - [快捷键](#快捷键)
@@ -71,14 +73,37 @@ Sony A7R5 一次连拍下来动辄上千张 ARW + HIF。后期最耗时的不是
 
 侧栏一键过滤:**无鸟 / 0★ / 脱焦 / 精焦 / 过曝 / 欠曝 / 飞鸟**。配合「最低星级」和「只看 Pick」两个开关,可以快速定位想看的子集。
 
-### 自定义标签面板
+### 自定义标签面板 + 状态虚拟筛选
 
-右侧标签面板支持自建标签树(常用/全部分组、颜色、收藏)。过滤模式三选一:
+右侧标签面板上下两段:
+
+**EXIF 拍摄信息(上半)**:选中 1 张显示 ISO / 快门 / 光圈 / 焦距 / 镜头 / 机型 / 锐度 / 美学 / 鸟检置信。多选时显示星级分布 + 状态计数(精修 / 飞版 / 过曝 / 欠曝 等张数)。
+
+**标签树(下半)** 三段虚实结合:
+
+- **星级 + 状态(虚拟筛选,不写 DB)**:★★★/★★/★/☆/无鸟 + 精修 P / 精焦 / 脱焦 / 飞版 / 过曝 / 欠曝。每行带实时计数,点击切换,OR 组合
+- **拍摄参数(扫描时自动建标签)**:
+  - `拍摄参数 / ISO / ISO 100` … `ISO 12800`(每个出现过的 ISO 值一个标签)
+  - `拍摄参数 / 镜头 / FE 200-600mm F5.6-6.3 G OSS`(每只用过的镜头一个)
+  - `拍摄参数 / 焦距 / 200mm 300mm 400mm 500mm 600mm`(round 到最近 100mm)
+  - `拍摄参数 / 光圈 / f/5.6 f/6.3 f/8`(round 到标准 1/3-stop)
+- **用户标签**:手动建的标签树(常用/全部分组、颜色、收藏)
+
+过滤模式三选一(对用户标签段):
 - **任一** — 视图显示带任一已选标签的 shot
 - **全部** — 视图显示同时带全部已选标签的 shot
 - **排除**(开关,会变红高亮)— 视图反过来,只显示**不含**已选标签的 shot
 
-典型用法:给精品打 `精修` → 选中 `精修` 标签 → 点排除 → 视图变成"所有没打过精修的",继续筛选、批量打另一个标签、或者移走。面板底部「全选 (N)」一键选中当前筛后视图的所有 shot,配合「+ 标签 (T)」批量加标签。
+状态 + 拍摄参数 + 用户标签三个维度可同时叠加(AND)。典型用法:`状态:精焦` + `ISO 12800` + 用户标签 `鸟类/林鸟` → 一键看所有高感拍的精焦林鸟。
+
+面板底部「全选 (N)」一键选中当前筛后视图的所有 shot,配合「+ 标签 (T)」批量加标签。
+
+### 排序
+
+侧栏「排序」段提供 9 个键 + 升降序切换:
+- 拍摄时间(默认)、星级、ISO、光圈、焦距、主体锐度、鸟眼锐度、美学、鸟检置信
+- 选择记到 localStorage,下次启动还在
+- 后端按 SHOT 维度聚合(MAX over ARW+HIF members),NULL 永远排末尾
 
 ---
 
@@ -102,6 +127,50 @@ Sony A7R5 一次连拍下来动辄上千张 ARW + HIF。后期最耗时的不是
 - 拖任意一张所有图同步移动;滚轮缩放所有图同步缩放,每张围绕自己的锚点
 - 源像素 6400px,在 Retina 屏 500% 下接近 1:1 像素
 - **S** 一次切换联动 / 独立 · **0** 重置到初始 · **Esc** 关闭 · 单元格里的「删」按钮可即时丢弃
+
+---
+
+## 多帧堆栈降噪
+
+选 2 张以上 → **S 键 / 「堆栈」按钮** → 设参数 → 开始。后端 ORB 特征对齐到锚帧 + sigma-clipped mean(astro 标准),输出**真·RAW 格式的 Linear DNG**,Lightroom 当成 raw 文件处理(白平衡、曝光、高光全部可调)。
+
+| 参数 | 选项 | 备注 |
+|---|---|---|
+| 锚帧 | 选定中默认评分最高那张 | 其它帧 ORB 对齐到它,鸟位置不偏 |
+| 合成方式 | sigma-clip(推荐)/ 中值 / 均值 | sigma-clip 自动剔除背景树叶动态噪声 |
+| 解码源 | 内嵌 JPEG(快)/ 完整 RAW(质量高) | RAW 模式默认 half-size 防 OOM,可勾"完整传感器尺寸"出 60MP |
+| 自动对齐 | ORB 特征(默认开) | 关掉=直接平均(适合三脚架定机位) |
+
+**输出文件** 保存在源照片旁的 `Stacks/` 子目录:
+- JPEG 模式 → `stack_*.jpg`(q95,~20-40MB)
+- RAW 模式 → `stack_*.dng`(16-bit Linear DNG,~90-200MB,带源 ARW 的色彩矩阵 + AsShotNeutral)
+- 总是同时输出 `_preview.jpg` 给浏览器对比 + `_thumb.jpg` 给缩略图
+
+完成后对话框可:**在 Finder 中显示** / **打开文件夹** / **对比所有原图** —— 最后一个会把堆栈结果作为一格连同所有原帧一起拉进 Compare 视图,联动 500% 缩放看降噪效果(堆栈格继承锚帧的 eye_xy,鸟眼定位与原图一致)。
+
+> Linear DNG 的颜色管理:用 `pidng` 写,`PhotometricInterpretation=LinearRaw`,`ColorMatrix1` 用 libraw `rgb_xyz_matrix` 转列向量形式,`AsShotNeutral` 用相机的 `camera_whitebalance` 反算。决定不做拜耳层堆栈:亚像素错位会破坏拜耳排列,对鸟摄过度设计。
+
+---
+
+## 拍摄参数 + EXIF 面板
+
+扫描时每张照片的 EXIF 拿出来存进 DB:`iso / f_number / exposure_time / focal_length / lens_model / camera_model`。然后:
+
+1. **右上 EXIF 面板**:点 1 张照片实时显示 ISO / 快门 / 光圈 / 焦距 / 镜头 / 机型 + 锐度 / 美学 / 鸟检置信。多选显示星级 + 状态汇总
+2. **自动标签**:扫完后跑 `_apply_auto_tags`,在 `拍摄参数/` 下按 EXIF 值聚类成可点击的标签(详见上面"自定义标签面板")
+3. **已扫照片回填**:`POST /api/backfill-exif` 重新读 EXIF 不重做 AI / 缩略图,适合升级版本后补这些列
+
+```bash
+# 仅补缺(默认):跳过已有 iso 的行
+curl -X POST http://127.0.0.1:7891/api/backfill-exif \
+  -H "Content-Type: application/json" -d '{"only_missing": true}'
+
+# 强制全量(覆盖已有):用于修改了 EXIF 解析逻辑
+curl -X POST http://127.0.0.1:7891/api/backfill-exif \
+  -H "Content-Type: application/json" -d '{"only_missing": false}'
+```
+
+新扫描的目录会自动走这套流程,**不需要手动 backfill**。
 
 ---
 
@@ -150,9 +219,11 @@ pick = 1 ⇔ rating == 3 且分数在所有 3 星中位于 top 25%
 | B | 选中所有「非组内最佳」(连拍组里除最佳之外的) |
 | C | 对比选中的(2–9 张) |
 | D | 删除选中 |
+| S | 主视图: 堆栈选中的 / 对比视图: 切换同步 / 独立缩放 |
+| T | 给选中的批量加 / 删标签 |
+| R | 在 Finder 中显示第一张选中 |
 | J / → | 详情页下一张 |
 | K / ← | 详情页上一张 |
-| S | 对比页切换同步 / 独立缩放 |
 
 ---
 
@@ -251,6 +322,7 @@ tailorbird/
 │   │   │   ├── ai_flying.py         SuperFlier 飞鸟分类
 │   │   │   ├── ai_pipeline.py       AI 全流程编排(shot 级)
 │   │   │   ├── similar.py           全目录 pHash 相似图片分组
+│   │   │   ├── stacker.py           多帧堆栈: ORB 对齐 + sigma-clip + Linear DNG 输出
 │   │   │   ├── deleter.py           送废纸篓
 │   │   │   └── file_mover.py        移到子文件夹
 │   │   └── db/schema.py             SQLite 表 + 自动迁移
@@ -258,14 +330,18 @@ tailorbird/
 │       └── backfill_focus.py        一次性 EXIF 回填脚本
 ├── frontend/                        React + Vite
 │   └── src/
-│       ├── App.jsx                  主框架 + 状态管理 + 侧栏
+│       ├── App.jsx                  主框架 + 状态管理 + 侧栏 + 排序
 │       ├── Grid.jsx                 网格(按 cluster 分块)
 │       ├── Clusters.jsx             连拍组横排视图
 │       ├── SimilarView.jsx          相似图片分组视图
 │       ├── Tile.jsx                 单张卡片(星级 / 徽章)
 │       ├── PanZoom.jsx              可缩放可拖动的图片视口(支持叠加层)
 │       ├── DetailView.jsx           详情页 + AF / 鸟框 / 眼位叠加
-│       ├── Compare.jsx              多图同步缩放对比
+│       ├── Compare.jsx              多图同步缩放对比(支持堆栈结果一并比对)
+│       ├── StackDialog.jsx          多帧堆栈对话框 + 进度 + 结果对比入口
+│       ├── ExifPanel.jsx            右上 EXIF / 拍摄参数面板
+│       ├── TagFilterPanel.jsx       右下标签树 + 状态虚拟筛选
+│       ├── tagTree.js               标签树构建 + natural-sort
 │       └── api.js                   REST 客户端
 ├── data/                            运行时数据(不入 git)
 │   ├── tailorbird.db                SQLite
@@ -309,13 +385,22 @@ tailorbird/
 | `POST` | `/api/delete` | 删除(body: `{photo_ids, pair_with_sidecar, mode, subfolder_name}`) |
 | `POST` | `/api/exif/write` | 把星级 / Pick / Label 写入 XMP |
 | `POST` | `/api/exif/clear` | 清除星级 XMP |
+| `POST` | `/api/backfill-exif` | 重读 EXIF + 重跑自动标签;`{folder?, only_missing}` |
 | `POST` | `/api/annotate` | 用户手动覆盖鸟框 / 眼位,重新计算 |
 | `GET` | `/api/presets` | 预设列表 |
 | `POST` | `/api/presets/apply` | 应用预设(只重算评分,不重跑 AI) |
 | `POST` | `/api/recompute` | 重新聚类 + 评分(`run_ai=true` 也重跑 AI) |
 | `GET` | `/api/history` | 最近删除批次 |
 | `POST` | `/api/open-folder` | 在 Finder 打开本机路径(限于扫描过的目录子路径) |
+| `POST` | `/api/reveal-path` | 在 Finder 高亮任意文件(目录则打开);限于扫描根内 |
+| `POST` | `/api/reveal` | 按 photo_id 在 Finder 高亮文件 |
 | `GET` | `/api/find-move-target?folder=&name=` | 递归找扫描根下叫 `name` 的子目录,带文件数和 mtime |
+| `POST` | `/api/stack` | 启动多帧堆栈;`{photo_ids, anchor_id, source, mode, align, full_size}` → `{task_id}` |
+| `GET` | `/api/stack/status?task_id=` | 堆栈进度 + 阶段 + 结果路径 |
+| `GET` | `/api/stack/result/{task_id}?kind=preview\|full\|thumb` | 堆栈输出文件(preview=JPEG, full=主输出, TIFF/JPEG/DNG 各自的 media-type) |
+| `GET` | `/api/stacks` | 历史堆栈列表(`data/stacks/` 下旧版兼容) |
+| `GET` | `/api/shots?sort_by=&sort_order=` | 加 9 个排序键:`shot_at/rating/iso/focal_length/f_number/subject_sharpness/eye_sharpness/aesthetic_score/bird_confidence` |
+| `GET` | `/api/shots?ratings=&pick=&is_flying=&is_over=&is_under=&focus_state=` | 状态虚拟过滤(post-aggregation) |
 
 所有改写操作都先写 SQLite 再返回,失败 rollback。删除走 `send2trash` 或 `shutil.move`,**不直接 `os.remove`**。
 
@@ -358,6 +443,13 @@ SQLite,WAL 模式,启动时通过 `ALTER TABLE` 自动迁移新列。
 | `pick` | INTEGER | top 25% of 3-star |
 | `phash`, `cluster_id`, `is_cluster_best` | TEXT / INTEGER | 连拍聚类 |
 | `user_mark` | TEXT | 用户手动标记 |
+| `iso` | INTEGER | EXIF ISO |
+| `f_number` | REAL | EXIF FNumber (光圈) |
+| `exposure_time` | REAL | EXIF ExposureTime,秒 |
+| `focal_length` | REAL | EXIF FocalLength,mm |
+| `lens_model` | TEXT | EXIF LensModel |
+| `camera_model` | TEXT | EXIF Model |
+| `medium_path` | TEXT | 中等分辨率预览缓存(`data/medium/`),没有则走实时解码 |
 | `deleted_at` | REAL | 软删标记(走 trash 或 move 后置位) |
 | `error` | TEXT | 处理异常信息 |
 | `analyzed_at` | REAL | AI 完成时间 |
@@ -439,6 +531,9 @@ sqlite3 data/tailorbird.db "SELECT rating, COUNT(*) FROM photos WHERE deleted_at
 - [ ] Windows / Linux 适配(目前只测过 macOS Apple Silicon)
 - [ ] 删除操作的「撤销最近一批」按钮(数据已备好)
 - [ ] 相似分组结果的客户端防抖,大目录拖滑块时不抖
+- [ ] 堆栈 RAW 模式 full_size 用流式 Welford 在线均值,避免 60MP × N 帧的 8GB+ 内存峰值
+- [ ] 拍摄参数自动标签加快门档(目前只做了 ISO/镜头/焦距/光圈,快门变化大没做)
+- [ ] 状态过滤改成 backend post-aggregation 真正生效(目前虚拟过滤还在前端做)
 
 ---
 

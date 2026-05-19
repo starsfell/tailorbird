@@ -161,6 +161,69 @@ input:focus { border-color: var(--accent); }
 .tag-panel .tag-row:hover .more { opacity: 1; }
 .tag-panel .tag-row .more:hover { color: var(--text); }
 
+/* Right column stacks ExifPanel on top of TagFilterPanel */
+.right-stack {
+  display: flex; flex-direction: column;
+  height: 100%; min-height: 0;
+}
+.right-stack .exif-panel { flex: 0 0 auto; max-height: 45%; }
+.right-stack .exif-panel.expanded { border-bottom: 1px solid var(--border); }
+.right-stack .tag-panel { flex: 1 1 auto; min-height: 0; border-top: none; }
+
+/* ExifPanel shares chrome with TagFilterPanel */
+.exif-panel {
+  border-left: 1px solid var(--border);
+  background: var(--bg-elev);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+  transition: width 0.18s ease;
+}
+.exif-panel.collapsed { width: 36px; }
+.exif-panel.expanded { width: 300px; }
+.exif-panel .panel-toggle {
+  width: 100%; padding: 10px 0;
+  background: transparent; border: none; cursor: pointer;
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  color: var(--muted); font-size: 12px;
+}
+.exif-panel.collapsed .panel-toggle {
+  writing-mode: vertical-rl; transform: rotate(180deg);
+  padding: 12px 4px; height: 100%; justify-content: flex-start;
+}
+.exif-panel .panel-toggle:hover { color: var(--text); }
+.exif-panel .panel-head {
+  padding: 8px 10px; border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: space-between; gap: 6px;
+}
+.exif-panel .panel-head h3 {
+  margin: 0; font-size: 12px; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.04em;
+}
+.exif-body { padding: 8px 10px; overflow-y: auto; flex: 1 1 auto; }
+.exif-section {
+  padding: 6px 0; border-bottom: 1px solid var(--border);
+}
+.exif-section:last-child { border-bottom: none; }
+.exif-row {
+  display: flex; justify-content: space-between; align-items: baseline;
+  font-size: 12px; padding: 2px 0; gap: 8px;
+}
+.exif-row .lab { color: var(--muted); flex: none; }
+.exif-row .val {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  text-align: right;
+}
+.exif-empty {
+  padding: 24px 8px; text-align: center; color: var(--text);
+  font-size: 12px; line-height: 1.6;
+}
+
+/* Status virtual-filter rows in TagFilterPanel (look like tag rows, slightly
+   different active treatment so user can tell virtual from real) */
+.tag-panel .tag-row.status-row.active {
+  background: #2a3f55; color: var(--text);
+}
+
 /* Right-click / hover context menu */
 .ctx-menu {
   position: fixed; z-index: 30;
@@ -640,4 +703,108 @@ input:focus { border-color: var(--accent); }
   border-radius: 50%;
   border: 2px solid #ffd866; background: rgba(255,216,102,0.45);
   box-shadow: 0 0 0 1px rgba(0,0,0,0.6);
+}
+
+/* ─── StackDialog ─────────────────────────────────────────────────────────── */
+.stack-overlay {
+  position: fixed; inset: 0; z-index: 30;
+  background: rgba(0,0,0,0.72);
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px;
+}
+.stack-modal {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  width: 100%; max-width: 1280px; max-height: 92vh;
+  display: flex; flex-direction: column;
+  box-shadow: 0 16px 48px rgba(0,0,0,0.6);
+  overflow: hidden;
+}
+.stack-head {
+  padding: 10px 14px; border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 8px;
+}
+.stack-title { font-size: 14px; font-weight: 600; }
+
+.stack-form {
+  padding: 18px 18px 14px; display: flex; flex-direction: column; gap: 12px;
+}
+.stack-form .row { display: flex; align-items: center; gap: 12px; }
+.stack-form .row > label:first-child {
+  width: 76px; color: var(--muted); font-size: 12px;
+}
+.stack-form select {
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: 6px; padding: 6px 10px; color: var(--text);
+  min-width: 240px;
+}
+.stack-form .seg {
+  display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden;
+}
+.stack-form .seg button {
+  background: transparent; border: none; padding: 6px 12px;
+  border-right: 1px solid var(--border); border-radius: 0;
+}
+.stack-form .seg button:last-child { border-right: none; }
+.stack-form .seg button.on { background: var(--accent); color: #0a1612; }
+.stack-form .chk {
+  display: flex; align-items: center; gap: 6px; cursor: pointer;
+  color: var(--text);
+}
+.stack-hint {
+  color: var(--muted); font-size: 12px; padding: 4px 0 0 88px;
+}
+
+.stack-progress {
+  padding: 32px 18px; display: flex; flex-direction: column; gap: 10px;
+}
+.stack-phase { font-size: 13px; }
+.stack-bar {
+  height: 6px; background: #1a1c20; border-radius: 3px; overflow: hidden;
+}
+.stack-bar > div {
+  height: 100%; background: var(--accent); transition: width 0.25s ease;
+}
+.stack-current {
+  color: var(--muted); font-size: 11px; font-family: ui-monospace, monospace;
+}
+
+.stack-error {
+  padding: 24px 18px; display: flex; flex-direction: column; gap: 12px;
+  color: var(--danger);
+}
+.stack-error button { align-self: flex-start; }
+
+.stack-result {
+  display: flex; flex-direction: column; flex: 1; min-height: 0;
+}
+.stack-compare {
+  flex: 1; display: grid; grid-template-columns: 1fr 1fr;
+  gap: 4px; padding: 4px; min-height: 0;
+}
+.stack-compare .half {
+  display: flex; flex-direction: column;
+  background: #07080a; border: 1px solid var(--border); border-radius: 4px;
+  min-height: 0;
+}
+.stack-compare .half .lab {
+  padding: 6px 10px; border-bottom: 1px solid var(--border);
+  color: var(--muted); font-size: 11px;
+}
+.stack-compare .half img {
+  flex: 1; min-height: 0; width: 100%;
+  object-fit: contain; background: #000;
+}
+.stack-actions {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 14px; border-top: 1px solid var(--border);
+}
+.stack-savepath {
+  font-size: 12px; min-width: 0; flex: 1 1 auto;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.stack-savepath code {
+  background: var(--bg); padding: 2px 6px; border-radius: 4px;
+  font-family: ui-monospace, monospace;
 }

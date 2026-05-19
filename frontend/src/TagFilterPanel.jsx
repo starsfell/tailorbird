@@ -184,6 +184,69 @@ function pruneTree(roots, term) {
   return roots.map(visit).filter(Boolean)
 }
 
+// Virtual status filters — computed from shot row fields, not real DB tags.
+// id is the wire format the App's refreshShots understands.
+const STATUS_GROUPS = [
+  {
+    title: '星级',
+    items: [
+      { id: 'star-3', label: '★★★ 三星' },
+      { id: 'star-2', label: '★★ 二星' },
+      { id: 'star-1', label: '★ 一星' },
+      { id: 'star-0', label: '☆ 无星' },
+      { id: 'no-bird', label: '无鸟' },
+    ],
+  },
+  {
+    title: '状态',
+    items: [
+      { id: 'pick', label: '精修 P' },
+      { id: 'focus-best', label: '精焦' },
+      { id: 'focus-off', label: '脱焦' },
+      { id: 'flying', label: '飞版' },
+      { id: 'over', label: '过曝' },
+      { id: 'under', label: '欠曝' },
+    ],
+  },
+]
+
+function StatusFilterSection({ statusFilter, setStatusFilter, statusCounts }) {
+  const toggle = (id) => setStatusFilter(prev => {
+    const n = new Set(prev)
+    if (n.has(id)) n.delete(id); else n.add(id)
+    return n
+  })
+  return (
+    <>
+      {STATUS_GROUPS.map(g => (
+        <React.Fragment key={g.title}>
+          <div className="section-title">{g.title}</div>
+          {g.items.map(item => {
+            const active = statusFilter.has(item.id)
+            const count = statusCounts?.[item.id]
+            return (
+              <div key={item.id}
+                className={'tag-row status-row' + (active ? ' active' : '')}
+                onClick={() => toggle(item.id)}
+                style={{ paddingLeft: 18 }}
+                title="点击切换筛选"
+              >
+                <span className="name">
+                  <span className={'cmp-pick' + (active ? ' on' : '')} style={{minWidth:14,display:'inline-block',textAlign:'center'}}>
+                    {active ? '✓' : ''}
+                  </span>
+                  <span style={{marginLeft:4}}>{item.label}</span>
+                </span>
+                {count != null && <span className="count">{count}</span>}
+              </div>
+            )
+          })}
+        </React.Fragment>
+      ))}
+    </>
+  )
+}
+
 export function TagFilterPanel({
   expanded, setExpanded,
   allTags, tagFilter, setTagFilter,
@@ -193,6 +256,7 @@ export function TagFilterPanel({
   countsByTag,
   viewCount,
   onSelectAllInView,
+  statusFilter, setStatusFilter, statusCounts,
 }) {
   const [q, setQ] = useState('')
   const [ctx, setCtx] = useState(null)
@@ -212,6 +276,27 @@ export function TagFilterPanel({
       return next
     })
   }
+
+  // One-time seed: auto-expand 拍摄参数 + its 4 direct children (ISO, 镜头, 焦距, 光圈)
+  // so users see all auto-generated shooting-param tags at first glance.
+  useEffect(() => {
+    if (allTags.length === 0) return
+    try {
+      if (localStorage.getItem('tagTreeAutoSeeded') === '1') return
+    } catch { return }
+    const root = allTags.find(t => t.name === '拍摄参数')
+    if (!root) return
+    const toExpand = new Set([root.id])
+    for (const t of allTags) if (t.parent_id === root.id) toExpand.add(t.id)
+    setExpandedIds(prev => {
+      const next = new Set([...prev, ...toExpand])
+      try {
+        localStorage.setItem('tagTreeExpanded', JSON.stringify([...next]))
+        localStorage.setItem('tagTreeAutoSeeded', '1')
+      } catch {}
+      return next
+    })
+  }, [allTags])
 
   const { roots, byId } = useMemo(() => buildTagTree(allTags), [allTags])
   const pruned = useMemo(() => pruneTree(roots, q.trim()), [roots, q])
@@ -283,6 +368,13 @@ export function TagFilterPanel({
             <span style={{fontSize:11, color:'var(--muted)'}}>已选 {tagFilter.size}</span>
             <button onClick={() => setTagFilter(new Set())} style={{padding:'2px 6px', fontSize:11}}>清空</button>
           </div>
+        )}
+        {setStatusFilter && (
+          <StatusFilterSection
+            statusFilter={statusFilter || new Set()}
+            setStatusFilter={setStatusFilter}
+            statusCounts={statusCounts}
+          />
         )}
         {favRoots.length > 0 && (
           <>

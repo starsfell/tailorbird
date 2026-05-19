@@ -61,13 +61,64 @@ def _existing_paths(folder_id: int) -> dict[str, dict]:
     return {r["path"]: dict(r) for r in rows}
 
 
+def _parse_basic_exif(exif: dict) -> dict:
+    """Pull just the shooting params we persist. EXIF tag values come in as
+    strings or numbers from exiftool's -n flag; coerce carefully."""
+    def _num(key):
+        v = exif.get(key)
+        if v is None or v == "":
+            return None
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+    def _intval(key):
+        v = exif.get(key)
+        if v is None or v == "":
+            return None
+        try:
+            return int(float(v))
+        except (TypeError, ValueError):
+            return None
+    def _strval(key):
+        v = exif.get(key)
+        s = str(v).strip() if v is not None else ""
+        return s or None
+    return {
+        "iso": _intval("ISO"),
+        "f_number": _num("FNumber"),
+        "exposure_time": _num("ExposureTime"),
+        "focal_length": _num("FocalLength"),
+        "lens_model": _strval("LensModel"),
+        "camera_model": _strval("Model"),
+    }
+
+
 def _analyze_one(path: Path) -> dict:
     """Heavy per-file work: decode preview, EXIF (incl. AF point), thumb, sharpness, phash."""
+    base = {
+        "path": str(path),
+        "stem": path.stem,
+        "ext": path.suffix.lower(),
+        "size": path.stat().st_size if path.exists() else 0,
+        "mtime": path.stat().st_mtime if path.exists() else 0,
+        "shot_at": None,
+        "width": None, "height": None,
+        "thumb_path": None,
+        "subject_sharpness": None,
+        "phash": None,
+        "focus_point": None,
+        "iso": None, "f_number": None, "exposure_time": None,
+        "focal_length": None, "lens_model": None, "camera_model": None,
+        "analyzed_at": time.time(),
+        "error": None,
+    }
     try:
         img = load_preview(path)
         exif = read_exif(path)
         shot_at = parse_shot_at(exif)
         focus = parse_focus_point(exif)
+        basic = _parse_basic_exif(exif)
         w, h = img.size
 
         thumb = make_thumbnail(img, THUMB_SIZE)
@@ -78,39 +129,19 @@ def _analyze_one(path: Path) -> dict:
         sharp = sharpness_score(gray)
         phash = compute_phash(img)
 
-        return {
-            "path": str(path),
-            "stem": path.stem,
-            "ext": path.suffix.lower(),
-            "size": path.stat().st_size,
-            "mtime": path.stat().st_mtime,
+        base.update({
             "shot_at": shot_at,
-            "width": w,
-            "height": h,
+            "width": w, "height": h,
             "thumb_path": str(thumb_path),
             "subject_sharpness": sharp,
             "phash": phash,
             "focus_point": json.dumps(focus) if focus else None,
-            "analyzed_at": time.time(),
-            "error": None,
-        }
+            **basic,
+        })
+        return base
     except Exception as e:
-        return {
-            "path": str(path),
-            "stem": path.stem,
-            "ext": path.suffix.lower(),
-            "size": path.stat().st_size if path.exists() else 0,
-            "mtime": path.stat().st_mtime if path.exists() else 0,
-            "shot_at": None,
-            "width": None,
-            "height": None,
-            "thumb_path": None,
-            "subject_sharpness": None,
-            "phash": None,
-            "focus_point": None,
-            "analyzed_at": time.time(),
-            "error": f"{type(e).__name__}: {e}",
-        }
+        base["error"] = f"{type(e).__name__}: {e}"
+        return base
 
 
 def _upsert_photo(folder_id: int, rec: dict) -> None:
@@ -118,14 +149,21 @@ def _upsert_photo(folder_id: int, rec: dict) -> None:
         conn.execute(
             """
             INSERT INTO photos(folder_id, path, stem, ext, size, mtime, shot_at, width, height,
-                              thumb_path, subject_sharpness, phash, focus_point, analyzed_at, error)
+                              thumb_path, subject_sharpness, phash, focus_point,
+                              iso, f_number, exposure_time, focal_length, lens_model, camera_model,
+                              analyzed_at, error)
             VALUES(:folder_id, :path, :stem, :ext, :size, :mtime, :shot_at, :width, :height,
-                   :thumb_path, :subject_sharpness, :phash, :focus_point, :analyzed_at, :error)
+                   :thumb_path, :subject_sharpness, :phash, :focus_point,
+                   :iso, :f_number, :exposure_time, :focal_length, :lens_model, :camera_model,
+                   :analyzed_at, :error)
             ON CONFLICT(path) DO UPDATE SET
                 size=excluded.size, mtime=excluded.mtime, shot_at=excluded.shot_at,
                 width=excluded.width, height=excluded.height, thumb_path=excluded.thumb_path,
                 subject_sharpness=excluded.subject_sharpness, phash=excluded.phash,
                 focus_point=excluded.focus_point,
+                iso=excluded.iso, f_number=excluded.f_number,
+                exposure_time=excluded.exposure_time, focal_length=excluded.focal_length,
+                lens_model=excluded.lens_model, camera_model=excluded.camera_model,
                 analyzed_at=excluded.analyzed_at, error=excluded.error
             """,
             {**rec, "folder_id": folder_id},
@@ -273,6 +311,110 @@ def _cluster_photos(folder_id: int) -> None:
 
 
 
+def _get_or_create_tag(conn, name: str, parent_id: int | None = None) -> int:
+    """Find tag by globally-unique name (tags.name is UNIQUE COLLATE NOCASE).
+    Create under given parent if missing. Returns tag id."""
+    row = conn.execute("SELECT id FROM tags WHERE name=? COLLATE NOCASE", (name,)).fetchone()
+    if row:
+        return row["id"]
+    cur = conn.execute(
+        "INSERT INTO tags(name, parent_id, created_at) VALUES(?, ?, ?)",
+        (name, parent_id, time.time()),
+    )
+    return cur.lastrowid
+
+
+# Standard 1/3-stop f-numbers (Sony A7R5 uses these increments).
+# Round the EXIF FNumber to the closest one for human-readable bucketing.
+_F_STOP_BUCKETS = [
+    1.4, 1.6, 1.8, 2.0, 2.2, 2.5, 2.8, 3.2, 3.5, 4.0, 4.5, 5.0,
+    5.6, 6.3, 7.1, 8.0, 9.0, 10.0, 11.0, 13.0, 14.0, 16.0, 18.0, 20.0, 22.0,
+]
+
+
+def _bucket_focal(mm: float) -> str | None:
+    """Round focal length to nearest 100mm. < 50mm gets its own bucket."""
+    if mm <= 0:
+        return None
+    if mm < 50:
+        return f"{int(round(mm / 10) * 10)}mm"
+    bucket = int(round(mm / 100) * 100)
+    return f"{bucket}mm"
+
+
+def _bucket_f_number(f: float) -> str | None:
+    """Round f-number to the nearest standard 1/3-stop label."""
+    if f <= 0:
+        return None
+    closest = min(_F_STOP_BUCKETS, key=lambda s: abs(s - f))
+    return f"f/{closest:g}"  # %g strips trailing zero: 4.0 → "4", 5.6 → "5.6"
+
+
+def _apply_auto_tags(folder_id: int) -> None:
+    """Auto-create tags from the photo's persisted EXIF columns and attach
+    them to matching photos.
+
+    Tag tree built (under '拍摄参数' parent):
+      ISO   → 'ISO 100', 'ISO 12800', …          (exact value)
+      镜头  → 'FE 200-600mm F5.6-6.3 G OSS', …   (full lens model string)
+      焦距  → '200mm', '300mm', …                 (rounded to nearest 100mm)
+      光圈  → 'f/4', 'f/5.6', 'f/6.3', …          (nearest 1/3 stop)
+
+    Uses INSERT OR IGNORE so re-running is idempotent. Doesn't remove old
+    auto-tags from photos whose EXIF changed (rare on raw files)."""
+    with tx() as conn:
+        rows = conn.execute(
+            "SELECT id, iso, lens_model, focal_length, f_number FROM photos "
+            "WHERE folder_id=? AND deleted_at IS NULL",
+            (folder_id,),
+        ).fetchall()
+        if not rows:
+            return
+
+        iso_groups: dict[int, list[int]] = {}
+        lens_groups: dict[str, list[int]] = {}
+        focal_groups: dict[str, list[int]] = {}
+        fnum_groups: dict[str, list[int]] = {}
+        for r in rows:
+            if r["iso"]:
+                iso_groups.setdefault(int(r["iso"]), []).append(r["id"])
+            if r["lens_model"]:
+                lens_groups.setdefault(r["lens_model"].strip(), []).append(r["id"])
+            if r["focal_length"]:
+                lbl = _bucket_focal(float(r["focal_length"]))
+                if lbl:
+                    focal_groups.setdefault(lbl, []).append(r["id"])
+            if r["f_number"]:
+                lbl = _bucket_f_number(float(r["f_number"]))
+                if lbl:
+                    fnum_groups.setdefault(lbl, []).append(r["id"])
+
+        if not (iso_groups or lens_groups or focal_groups or fnum_groups):
+            return
+
+        root = _get_or_create_tag(conn, "拍摄参数")
+
+        def _attach_group(parent_name: str, groups: dict, sort_key=None):
+            if not groups:
+                return
+            parent = _get_or_create_tag(conn, parent_name, parent_id=root)
+            items = sorted(groups.items(), key=sort_key) if sort_key else groups.items()
+            for name, pids in items:
+                tid = _get_or_create_tag(conn, str(name) if not isinstance(name, str) else name, parent_id=parent)
+                conn.executemany(
+                    "INSERT OR IGNORE INTO photo_tags(photo_id, tag_id) VALUES(?, ?)",
+                    [(pid, tid) for pid in pids],
+                )
+
+        _attach_group("ISO", {f"ISO {v}": pids for v, pids in iso_groups.items()},
+                     sort_key=lambda kv: int(kv[0].split()[1]))
+        _attach_group("镜头", lens_groups)
+        _attach_group("焦距", focal_groups,
+                     sort_key=lambda kv: int(kv[0].rstrip("m")))
+        _attach_group("光圈", fnum_groups,
+                     sort_key=lambda kv: float(kv[0].split("/")[1]))
+
+
 def scan_folder(
     folder: str | Path,
     progress: ScanProgress | None = None,
@@ -349,6 +491,7 @@ def scan_folder(
             progress.current_path = f"AI 失败: {type(e).__name__}: {e}"
 
     _apply_ratings(folder_id)
+    _apply_auto_tags(folder_id)
 
     with tx() as conn:
         conn.execute(

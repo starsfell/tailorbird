@@ -114,6 +114,12 @@ def init_db() -> None:
             ("rating", "INTEGER"),
             ("pick", "INTEGER DEFAULT 0"),
             ("xmp_tags", "TEXT"),
+            ("iso", "INTEGER"),
+            ("f_number", "REAL"),
+            ("exposure_time", "REAL"),       # in seconds, e.g. 0.004 = 1/250s
+            ("focal_length", "REAL"),         # in mm
+            ("lens_model", "TEXT"),
+            ("camera_model", "TEXT"),
         ]
         for col, typ in migrations:
             if col not in cols:

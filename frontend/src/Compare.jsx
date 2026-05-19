@@ -28,9 +28,10 @@ export function Compare({ shots, onClose, onDelete, onRemove, onBatchDelete, onB
   const togglePick = (id) => setPickedIds(prev => {
     const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n
   })
-  const pickAll = () => setPickedIds(new Set(shots.map(s => s.primary_id)))
+  const pickableShots = shots.filter(s => !s.isStackResult)
+  const pickAll = () => setPickedIds(new Set(pickableShots.map(s => s.primary_id)))
   const invertPick = () => setPickedIds(prev => new Set(
-    shots.map(s => s.primary_id).filter(id => !prev.has(id))
+    pickableShots.map(s => s.primary_id).filter(id => !prev.has(id))
   ))
   const clearPick = () => setPickedIds(new Set())
   const pickedShots = shots.filter(s => pickedIds.has(s.primary_id))
@@ -94,11 +95,14 @@ export function Compare({ shots, onClose, onDelete, onRemove, onBatchDelete, onB
       else if (e.key === 's' || e.key === 'S') setLinked(v => !v)
       else if (e.key === '0') resetView()
       else if (e.key === 'r' || e.key === 'R') {
-        // Reveal the first picked, else the first compared shot.
-        const target = pickedShots[0] || shots[0]
+        // Reveal the first picked, else the first non-stack compared shot.
+        const target = pickedShots[0] || pickableShots[0]
         if (target) {
           e.preventDefault()
-          api.revealInFinder(target.primary_id).catch(err => alert('打开 Finder 失败: ' + err.message))
+          const p = target.isStackResult
+            ? api.revealPath(target.resultPath)
+            : api.revealInFinder(target.primary_id)
+          p.catch(err => alert('打开 Finder 失败: ' + err.message))
         }
       }
       else if (e.key === 'a' || e.key === 'A') { e.preventDefault(); pickAll() }
@@ -165,32 +169,50 @@ export function Compare({ shots, onClose, onDelete, onRemove, onBatchDelete, onB
                 onClick={(e) => {
                   if (e.target.closest('button')) return
                   if (e.nativeEvent.detail !== 1) return
+                  if (s.isStackResult) return  // can't pick the synthetic stack result
                   togglePick(s.primary_id)
                 }}
-                title="点击此条加入多选"
-                style={{cursor:'pointer'}}
+                title={s.isStackResult ? '堆栈结果(只展示,不参与多选)' : '点击此条加入多选'}
+                style={{cursor: s.isStackResult ? 'default' : 'pointer'}}
               >
                 <span style={{display:'flex', alignItems:'center', gap:6}}>
-                  <span className={'cmp-pick' + (pickedIds.has(s.primary_id) ? ' on' : '')}>
-                    {pickedIds.has(s.primary_id) ? '✓' : ''}
-                  </span>
-                  <span style={{color:'#ffd866'}}>{stars}</span>
+                  {s.isStackResult ? (
+                    <span className="badge" style={{background:'var(--accent)', color:'#000'}}>STACK</span>
+                  ) : (
+                    <span className={'cmp-pick' + (pickedIds.has(s.primary_id) ? ' on' : '')}>
+                      {pickedIds.has(s.primary_id) ? '✓' : ''}
+                    </span>
+                  )}
+                  {!s.isStackResult && <span style={{color:'#ffd866'}}>{stars}</span>}
                   <span>{s.stem}</span>
                   {s.pick && <span className="badge pick-flag">P</span>}
                   {s.focus_weight != null && s.focus_weight >= 1.05 && <span className="badge focus-best">精焦</span>}
                 </span>
                 <span style={{color:'var(--muted)', fontVariantNumeric:'tabular-nums'}}>
-                  {eye ? `眼${eye}` : `主${subj}`}
+                  {s.isStackResult ? '' : (eye ? `眼${eye}` : `主${subj}`)}
                 </span>
                 <span style={{display:'flex', gap:6}}>
-                  <button onClick={(e) => { e.stopPropagation(); api.revealInFinder(s.primary_id).catch(err => alert(err.message)) }}
-                    style={{padding:'2px 8px'}} title="在 Finder 中显示 (R)">📁</button>
-                  <button onClick={() => onRemove?.(s)} style={{padding:'2px 8px'}} title="从对比中移出(不删文件)">移出对比</button>
-                  <button onClick={() => onDelete?.(s)} className="danger" style={{padding:'2px 8px'}}>删</button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      const p = s.isStackResult
+                        ? api.revealPath(s.resultPath)
+                        : api.revealInFinder(s.primary_id)
+                      p.catch(err => alert(err.message))
+                    }}
+                    style={{padding:'2px 8px'}}
+                    title="在 Finder 中显示 (R)"
+                  >📁</button>
+                  {!s.isStackResult && (
+                    <>
+                      <button onClick={() => onRemove?.(s)} style={{padding:'2px 8px'}} title="从对比中移出(不删文件)">移出对比</button>
+                      <button onClick={() => onDelete?.(s)} className="danger" style={{padding:'2px 8px'}}>删</button>
+                    </>
+                  )}
                 </span>
               </div>
               <PanZoom
-                src={api.fullUrl(s.primary_id, COMPARE_SOURCE_PX)}
+                src={s.imageUrl ?? api.fullUrl(s.primary_id, COMPARE_SOURCE_PX)}
                 onBaseChange={(b) => handleBase(s, b)}
                 transform={transformForShot(s)}
                 onTransform={(nt) => reportFromShot(s, nt)}
