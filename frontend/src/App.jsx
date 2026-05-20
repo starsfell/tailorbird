@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from './api.js'
 import { Grid } from './Grid.jsx'
 import { Clusters } from './Clusters.jsx'
@@ -11,6 +11,7 @@ import { ExifPanel } from './ExifPanel.jsx'
 import { TagCenterView } from './TagCenterView.jsx'
 import { TriageView } from './TriageView.jsx'
 import { StackDialog } from './StackDialog.jsx'
+import { HomeView } from './HomeView.jsx'
 
 const PHASE_LABEL = {
   idle: '空闲',
@@ -19,11 +20,17 @@ const PHASE_LABEL = {
   clustering: '聚类连拍',
   ai_analyzing: 'AI 分析',
   done: '完成',
+  cancelled: '已停止',
   error: '出错',
 }
 
 export default function App() {
+  const [view, setView] = useState('home')   // 'home' 引导首页 | 'workspace' 挑片工作区
+  const scanningRef = useRef(false)   // 新任务扫描进行中: 网格清空只显示进度,不显示残留数据
   const [folder, setFolder] = useState('')
+  const [pickedFiles, setPickedFiles] = useState([])   // 用"选文件"挑出的文件子集
+  const [openMenuOpen, setOpenMenuOpen] = useState(false)   // "打开 ▾" 下拉是否展开
+  const [subsetStems, setSubsetStems] = useState(new Set())   // 子集扫描后只看刚扫描的这些 stem;空=看整目录
   const [tab, setTab] = useState('grid')
   const [scanStatus, setScanStatus] = useState(null)
   const [shots, setShots] = useState([])
@@ -81,9 +88,14 @@ export default function App() {
 
   const refreshShots = useCallback(async () => {
     if (!folder) return
+    // 新任务扫描进行中: 保持网格空白,只让顶栏显示进度,避免误导成"已有结果"
+    if (scanningRef.current) { setShots([]); setShotsBeforeTagFilter([]); setTotal(0); return }
     try {
       const r = await api.listShots({ folder, min_sharpness: filter.min_sharpness, only_cluster_best: filter.only_cluster_best, sort_by: sortBy, sort_order: sortOrder, limit: 5000, include_deleted: false })
       let items = r.items
+      // 子集视图: 只保留刚用"选文件"扫描的那几张(按 stem 匹配)
+      if (subsetStems.size > 0) items = items.filter(s => subsetStems.has(s.stem))
+      const datasetTotal = subsetStems.size > 0 ? items.length : r.total
       if (filter.min_stars > 0) items = items.filter(s => (s.rating ?? -1) >= filter.min_stars)
       if (filter.only_pick) items = items.filter(s => s.pick)
       if (category === 'no-bird') items = items.filter(s => s.rating === -1)
@@ -142,9 +154,9 @@ export default function App() {
         items = items.filter(s => tagFilterNegate ? !match(s) : match(s))
       }
       setShots(items)
-      setTotal(r.total)
+      setTotal(datasetTotal)
     } catch (e) { console.error(e) }
-  }, [folder, filter, category, tagFilter, tagFilterMode, tagFilterNegate, statusFilter, sortBy, sortOrder])
+  }, [folder, filter, category, tagFilter, tagFilterMode, tagFilterNegate, statusFilter, sortBy, sortOrder, subsetStems])
 
   useEffect(() => { refreshFolders() }, [refreshFolders])
   useEffect(() => { refreshShots() }, [refreshShots])
@@ -178,20 +190,105 @@ export default function App() {
     return () => { cancelled = true }
   }, [refreshShots])
 
-  const onScan = async (runAi = true) => {
-    if (!folder.trim()) return
+  const stemOf = (p) => (p.split('/').pop() || '').replace(/\.[^.]+$/, '')
+
+  // 开始一次新扫描前: 清空网格 + 进入"扫描中"状态, 这样工作区只显示进度不显示残留
+  const beginFreshScan = () => {
+    scanningRef.current = true
+    setSubsetStems(new Set()); setSelected(new Set())
+    setShots([]); setShotsBeforeTagFilter([]); setTotal(0)
+  }
+
+  const onScan = async (runAi = true, folderArg = null) => {
+    const target = (folderArg ?? folder).trim()
+    if (!target) return
+    beginFreshScan()
     setBusy(true)
-    try { await api.startScan(folder.trim(), runAi) }
-    catch (e) { alert('扫描启动失败: ' + e.message); setBusy(false); return }
+    try { await api.startScan(target, runAi) }
+    catch (e) { scanningRef.current = false; alert('扫描启动失败: ' + e.message); setBusy(false); return }
     const wait = () => new Promise(r => setTimeout(r, 1500))
     while (true) {
       await wait()
       try {
         const s = await api.scanStatus()
-        if (s.phase === 'done' || s.phase === 'error') break
+        if (s.phase === 'done' || s.phase === 'error' || s.phase === 'cancelled') break
       } catch (e) { break }
     }
+    scanningRef.current = false
     setBusy(false); await refreshShots(); await refreshFolders()
+  }
+
+  const onScanFiles = async (runAi = true, filesArg = null) => {
+    const files = filesArg ?? pickedFiles
+    if (!files.length) return
+    beginFreshScan()
+    setBusy(true)
+    try { await api.startScanFiles(files, runAi) }
+    catch (e) { scanningRef.current = false; alert('扫描启动失败: ' + e.message); setBusy(false); return }
+    let phase = 'error'
+    while (true) {
+      await new Promise(r => setTimeout(r, 1500))
+      try {
+        const s = await api.scanStatus()
+        phase = s.phase
+        if (s.phase === 'done' || s.phase === 'error' || s.phase === 'cancelled') break
+      } catch (e) { break }
+    }
+    scanningRef.current = false
+    if (phase === 'done') {
+      // 扫描成功: 清空已选, 切到"只看刚扫描的这几张"子集视图
+      const stems = new Set(files.map(stemOf))
+      setPickedFiles([])
+      setSubsetStems(stems)   // 触发 refreshShots(经依赖变化), 故不在此手动刷新 shots
+      setBusy(false); await refreshFolders()
+      return
+    }
+    // 失败/取消: 保留已选以便重试
+    setBusy(false); await refreshShots(); await refreshFolders()
+  }
+
+  // ── 首页(引导页)入口 ───────────────────────────────────────────────
+  // 新建任务 = 选文件夹/文件 → 进入工作区并开始扫描; 历史 = 直接打开已扫描目录
+  const onHomePickFolder = async () => {
+    let r
+    try { r = await api.pickFolder() } catch (e) { alert('打开选择框失败: ' + e.message); return }
+    if (!r.path) return
+    setFolder(r.path); setPickedFiles([]); setSubsetStems(new Set()); setView('workspace')
+    const known = folders.some(f => f.path === r.path)
+    if (!known) await onScan(true, r.path)   // 新文件夹才扫描; 已扫过的直接打开
+  }
+
+  const onHomePickFiles = async () => {
+    let r
+    try { r = await api.pickFiles() } catch (e) { alert('打开选择框失败: ' + e.message); return }
+    if (!r.files || !r.files.length) return
+    setPickedFiles(r.files)
+    if (r.folder) setFolder(r.folder)
+    setView('workspace')
+    await onScanFiles(true, r.files)
+  }
+
+  const onOpenTask = (path) => { setFolder(path); setPickedFiles([]); setSubsetStems(new Set()); setView('workspace') }
+
+  const onCancelScan = async () => {
+    try { await api.cancelScan() } catch (e) { /* 扫描可能刚好结束,忽略 */ }
+  }
+
+  const onPickFolder = async () => {
+    try {
+      const r = await api.pickFolder()
+      if (r.path) { setFolder(r.path); setPickedFiles([]); setSubsetStems(new Set()) }
+    } catch (e) { alert('打开选择框失败: ' + e.message) }
+  }
+
+  const onPickFiles = async () => {
+    try {
+      const r = await api.pickFiles()
+      if (r.files && r.files.length) {
+        setPickedFiles(r.files)
+        if (r.folder) setFolder(r.folder)   // 让"已扫描目录"等视图能对上父目录
+      }
+    } catch (e) { alert('打开选择框失败: ' + e.message) }
   }
 
   const onRerunAi = async () => {
@@ -351,21 +448,61 @@ export default function App() {
     })
   }
 
+  if (view === 'home') {
+    return (
+      <HomeView
+        folders={folders}
+        busy={busy}
+        onPickFolder={onHomePickFolder}
+        onPickFiles={onHomePickFiles}
+        onOpenTask={onOpenTask}
+        onDeleteFolder={async (id) => { await api.deleteFolder(id); await refreshFolders() }}
+      />
+    )
+  }
+
   return (
     <div className="app">
       <div className="topbar">
+        <button className="home-back" onClick={() => setView('home')} title="返回首页">← 首页</button>
         <input
           type="text" value={folder} onChange={e => setFolder(e.target.value)}
           placeholder="照片目录绝对路径"
         />
-        <button onClick={async () => {
-          try {
-            const r = await api.pickFolder()
-            if (r.path) setFolder(r.path)
-          } catch (e) { alert('打开选择框失败: ' + e.message) }
-        }} title="弹出 macOS 文件夹选择框">📁 选择…</button>
-        <button className="primary" onClick={() => onScan(true)} disabled={busy || !folder.trim()}>{busy ? '处理中…' : '扫描+AI'}</button>
-        <button onClick={() => onScan(false)} disabled={busy || !folder.trim()} title="只抽预览/EXIF,跳过 AI(适合非鸟摄,快很多)">快速扫描</button>
+        <div className={`open-dropdown${openMenuOpen ? ' open' : ''}`}>
+          <button className="open-trigger" onClick={() => setOpenMenuOpen(v => !v)} title="选择要扫描的文件或文件夹">
+            打开 <span className="caret">▾</span>
+          </button>
+          {openMenuOpen && (
+            <>
+              <div className="open-menu-backdrop" onClick={() => setOpenMenuOpen(false)} />
+              <div className="open-menu">
+                <button onClick={() => { setOpenMenuOpen(false); onPickFolder() }}>打开文件夹…</button>
+                <button onClick={() => { setOpenMenuOpen(false); onPickFiles() }}>打开文件…</button>
+              </div>
+            </>
+          )}
+        </div>
+        {pickedFiles.length > 0 && (
+          <span className="picked-files-badge" title={pickedFiles.slice(0, 20).join('\n') + (pickedFiles.length > 20 ? `\n… 共 ${pickedFiles.length} 个` : '')}>
+            已选 {pickedFiles.length} 个文件
+            <button className="picked-files-clear" onClick={() => setPickedFiles([])} title="清空已选文件,改回整目录扫描">✕</button>
+          </span>
+        )}
+        {pickedFiles.length > 0 ? (
+          <>
+            <button className="primary" onClick={() => onScanFiles(true)} disabled={busy}>{busy ? '处理中…' : `扫描选中 ${pickedFiles.length} 张+AI`}</button>
+            <button onClick={() => onScanFiles(false)} disabled={busy} title="只抽预览/EXIF,跳过 AI">快速扫描选中</button>
+          </>
+        ) : (
+          <>
+            <button className="primary" onClick={() => onScan(true)} disabled={busy || !folder.trim()}>{busy ? '处理中…' : '扫描+AI'}</button>
+            <button onClick={() => onScan(false)} disabled={busy || !folder.trim()} title="只抽预览/EXIF,跳过 AI(适合非鸟摄,快很多)">快速扫描</button>
+          </>
+        )}
+        {busy && (
+          <button className="danger" onClick={onCancelScan} title="停止当前扫描(已分析的照片会保留)">停止</button>
+        )}
         <button onClick={onRerunAi} disabled={busy || !folder} title="只重跑 AI,不重新扫描">重跑 AI</button>
         <div className="status">{statusText}</div>
         <div className="tabs">
@@ -376,6 +513,13 @@ export default function App() {
           <button className={tab === 'tags' ? 'active' : ''} onClick={() => setTab('tags')}>标签</button>
         </div>
       </div>
+
+      {subsetStems.size > 0 && (
+        <div className="subset-banner">
+          <span>只看刚扫描的 {subsetStems.size} 张</span>
+          <button onClick={() => setSubsetStems(new Set())} title="显示该目录全部照片">显示整个目录</button>
+        </div>
+      )}
 
       <div className={`body${(tab === 'tags' || tab === 'triage') ? ' tag-mode' : ''}`}>
         {tab === 'tags' ? (
@@ -411,7 +555,7 @@ export default function App() {
               background: f.path === folder ? '#1f2228' : 'transparent',
               cursor:'pointer', fontSize:12, wordBreak:'break-all',
               position:'relative',
-            }} onClick={() => setFolder(f.path)} title={f.path}>
+            }} onClick={() => { setFolder(f.path); setSubsetStems(new Set()) }} title={f.path}>
               <button
                 className="folder-del"
                 title="从 tailorbird 移除(不删磁盘文件)"
@@ -603,7 +747,11 @@ export default function App() {
               ? <SimilarView folder={folder} selected={selected} setSelected={setSelected} onOpen={openDetail} refreshTick={similarTick} />
               : <div className="empty">请先选一个目录</div>
           ) : shots.length === 0 ? (
-            <div className="empty">{folder ? '没有照片。点击扫描开始。' : '请输入照片目录路径并扫描。'}</div>
+            <div className="empty">
+              {busy
+                ? `正在扫描…${statusText ? '  ' + statusText : ''}`
+                : folder ? '没有照片。点击扫描开始。' : '请输入照片目录路径并扫描。'}
+            </div>
           ) : tab === 'grid' ? (
             <Grid shots={shots} selected={selected} setSelected={setSelected} onOpen={openDetail} />
           ) : (

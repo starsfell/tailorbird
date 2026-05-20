@@ -25,14 +25,20 @@ from app.core.sharpness import sharpness_score
 from app.db.schema import tx
 
 
+class ScanCancelled(Exception):
+    """Raised internally to unwind the scan when progress.cancelled is set."""
+
+
 @dataclass
 class ScanProgress:
     total: int = 0
     done: int = 0
     failed: int = 0
     current_path: str = ""
-    phase: str = "idle"  # idle | scanning | analyzing | clustering | ai_analyzing | done
+    # idle | scanning | analyzing | clustering | ai_analyzing | done | cancelled
+    phase: str = "idle"
     run_ai: bool = True
+    cancelled: bool = False  # set by /api/scan/cancel; checked at safe points
 
 
 def discover_files(root: Path) -> list[Path]:
@@ -416,14 +422,45 @@ def _apply_auto_tags(folder_id: int) -> None:
 
 
 def scan_folder(
-    folder: str | Path,
+    folder: str | Path | None = None,
     progress: ScanProgress | None = None,
     max_workers: int = 4,
     on_update: Callable[[ScanProgress], None] | None = None,
+    files: list[str | Path] | None = None,
 ) -> ScanProgress:
-    folder = Path(folder).expanduser().resolve()
-    if not folder.is_dir():
-        raise ValueError(f"not a directory: {folder}")
+    """Scan a whole folder, or just a subset of files within it.
+
+    When `files` is given, only those files are analyzed and they're registered
+    under their common parent folder — so a later full-folder scan extends the
+    same dataset rather than starting over. Clustering / similarity / AI still
+    run per-folder over whatever photos exist for that folder.
+    """
+    only_stems: set[str] | None = None
+    if files:
+        selected = [Path(f).expanduser().resolve() for f in files]
+        selected = [
+            p for p in selected
+            if p.is_file() and p.suffix.lower() in SUPPORTED_EXTS
+        ]
+        if not selected:
+            raise ValueError("selection contains no supported image files")
+        if folder:
+            folder = Path(folder).expanduser().resolve()
+        else:
+            import os
+            common = Path(os.path.commonpath([str(p) for p in selected]))
+            folder = common if common.is_dir() else common.parent
+        discovered = selected
+        # Scope the (expensive) AI pass to just the picked files, so a 6-file
+        # selection doesn't re-run AI over every photo already in the folder.
+        only_stems = {p.stem for p in selected}
+    else:
+        if folder is None:
+            raise ValueError("either folder or files must be given")
+        folder = Path(folder).expanduser().resolve()
+        if not folder.is_dir():
+            raise ValueError(f"not a directory: {folder}")
+        discovered = None  # filled in after folder registration
 
     progress = progress or ScanProgress()
     progress.phase = "scanning"
@@ -431,11 +468,12 @@ def scan_folder(
         on_update(progress)
 
     folder_id = _register_folder(folder)
-    files = discover_files(folder)
+    if discovered is None:
+        discovered = discover_files(folder)
     existing = _existing_paths(folder_id)
 
     todo: list[Path] = []
-    for f in files:
+    for f in discovered:
         key = str(f)
         st = f.stat()
         prev = existing.get(key)
@@ -455,9 +493,17 @@ def scan_folder(
     if on_update:
         on_update(progress)
 
+    cancelled = False
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
         futures = {ex.submit(_analyze_one, f): f for f in todo}
         for fut in as_completed(futures):
+            if progress.cancelled:
+                # Stop dispatching; cancel any not-yet-started analyses. Running
+                # ones finish on their own when the pool shuts down below.
+                for pending in futures:
+                    pending.cancel()
+                cancelled = True
+                break
             rec = fut.result()
             _upsert_photo(folder_id, rec)
             progress.done += 1
@@ -467,13 +513,14 @@ def scan_folder(
             if on_update:
                 on_update(progress)
 
+    # Always finalize whatever was analyzed so the partial result is usable.
     progress.phase = "clustering"
     if on_update:
         on_update(progress)
     _cluster_photos(folder_id)
 
-    # AI pass (optional, controlled by progress.run_ai)
-    if getattr(progress, "run_ai", True):
+    # AI pass (optional; skipped if the scan was cancelled during analysis).
+    if not cancelled and getattr(progress, "run_ai", True):
         try:
             from app.core.ai_pipeline import run_ai_for_folder
             progress.phase = "ai_analyzing"
@@ -481,12 +528,16 @@ def scan_folder(
                 on_update(progress)
 
             def _ai_cb(done: int, total: int) -> None:
+                if progress.cancelled:
+                    raise ScanCancelled()
                 progress.total = total
                 progress.done = done
                 if on_update:
                     on_update(progress)
 
-            run_ai_for_folder(folder_id, on_progress=_ai_cb)
+            run_ai_for_folder(folder_id, on_progress=_ai_cb, only_stems=only_stems)
+        except ScanCancelled:
+            cancelled = True
         except Exception as e:
             progress.current_path = f"AI 失败: {type(e).__name__}: {e}"
 
@@ -499,7 +550,7 @@ def scan_folder(
             (time.time(), folder_id),
         )
 
-    progress.phase = "done"
+    progress.phase = "cancelled" if cancelled else "done"
     if on_update:
         on_update(progress)
     return progress

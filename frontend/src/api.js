@@ -15,7 +15,10 @@ async function req(path, opts = {}) {
 export const api = {
   startScan: (folder, runAi = true) =>
     req('/api/scan', { method: 'POST', body: JSON.stringify({ folder, run_ai: runAi }) }),
+  startScanFiles: (files, runAi = true) =>
+    req('/api/scan', { method: 'POST', body: JSON.stringify({ files, run_ai: runAi }) }),
   scanStatus: () => req('/api/scan/status'),
+  cancelScan: () => req('/api/scan/cancel', { method: 'POST' }),
   listShots: (params = {}) => {
     const qs = new URLSearchParams()
     for (const [k, v] of Object.entries(params)) {
@@ -58,6 +61,7 @@ export const api = {
   revealPath: (path) =>
     req('/api/reveal-path', { method: 'POST', body: JSON.stringify({ path }) }),
   pickFolder: () => req('/api/pick-folder', { method: 'POST' }),
+  pickFiles: () => req('/api/pick-files', { method: 'POST' }),
   exportTag: (tag_id, opts = {}) =>
     req('/api/export-tag', {
       method: 'POST',

@@ -46,23 +46,30 @@ _scan_lock = threading.Lock()
 
 
 class ScanReq(BaseModel):
-    folder: str
+    # Either scan a whole folder, or a subset of files within one. When `files`
+    # is given, `folder` is optional (derived from the files' common parent).
+    folder: Optional[str] = None
+    files: Optional[list[str]] = None
     run_ai: bool = True
 
 
 @app.post("/api/scan")
 def start_scan(req: ScanReq) -> dict:
+    if not req.folder and not req.files:
+        raise HTTPException(400, "either folder or files is required")
     with _scan_lock:
         prev = _scan_state.get("thread")
         if prev and prev.is_alive():
             raise HTTPException(409, "another scan is in progress")
         progress = ScanProgress(run_ai=req.run_ai)
         _scan_state["progress"] = progress
-        _scan_state["folder"] = req.folder
+        # Resolve the folder up front (from files' common parent if needed) so
+        # /api/scan/status reports the right folder even mid-scan.
+        _scan_state["folder"] = req.folder or _common_parent(req.files)
 
         def _runner() -> None:
             try:
-                scan_folder(req.folder, progress=progress)
+                scan_folder(req.folder, progress=progress, files=req.files)
             except Exception as e:
                 progress.phase = "error"
                 progress.current_path = f"{type(e).__name__}: {e}"
@@ -70,7 +77,59 @@ def start_scan(req: ScanReq) -> dict:
         t = threading.Thread(target=_runner, daemon=True)
         _scan_state["thread"] = t
         t.start()
-    return {"started": True, "folder": req.folder}
+    return {"started": True, "folder": _scan_state.get("folder"), "files": len(req.files) if req.files else None}
+
+
+def _common_parent(files: Optional[list[str]]) -> Optional[str]:
+    if not files:
+        return None
+    import os
+    try:
+        common = os.path.commonpath([str(Path(f).expanduser().resolve()) for f in files])
+        p = Path(common)
+        return str(p if p.is_dir() else p.parent)
+    except (ValueError, OSError):
+        return None
+
+
+@app.post("/api/pick-files")
+def pick_files() -> dict:
+    """Native multi-select file picker. Returns chosen file paths + their
+    common parent folder."""
+    import subprocess
+    script = (
+        'set theFiles to choose file with prompt "选择照片（可多选）" '
+        'with multiple selections allowed\n'
+        'set out to ""\n'
+        'repeat with f in theFiles\n'
+        '  set out to out & POSIX path of f & linefeed\n'
+        'end repeat\n'
+        'return out'
+    )
+    try:
+        result = subprocess.run(
+            ["osascript", "-e", script],
+            capture_output=True, text=True, timeout=300,
+        )
+    except Exception as e:
+        raise HTTPException(500, f"file picker failed: {e}")
+    if result.returncode != 0:
+        # User canceled.
+        return {"files": [], "folder": None}
+    paths = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    return {"files": paths, "folder": _common_parent(paths)}
+
+
+@app.post("/api/scan/cancel")
+def cancel_scan() -> dict:
+    """Request the in-progress scan to stop at the next safe point. Photos
+    already analyzed are kept; clustering/ratings still finalize on them."""
+    p: ScanProgress = _scan_state["progress"]
+    thread = _scan_state.get("thread")
+    if not (thread and thread.is_alive()):
+        return {"cancelled": False, "reason": "no scan in progress"}
+    p.cancelled = True
+    return {"cancelled": True}
 
 
 @app.get("/api/scan/status")
@@ -1573,7 +1632,7 @@ def get_stack_file(name: str, kind: str = "full"):
     return FileResponse(str(target), media_type="image/jpeg")
 
 
-_FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+from app.config import FRONTEND_DIST as _FRONTEND_DIST
 if _FRONTEND_DIST.is_dir():
     from fastapi.staticfiles import StaticFiles
     app.mount("/", StaticFiles(directory=str(_FRONTEND_DIST), html=True), name="frontend")

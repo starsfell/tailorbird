@@ -175,8 +175,16 @@ def recompute_focus_weights(folder_id: int) -> int:
     return n
 
 
-def run_ai_for_folder(folder_id: int, on_progress: Callable[[int, int], None] | None = None) -> dict:
-    """Run AI on all shots in a folder. Propagates results to all member photos."""
+def run_ai_for_folder(
+    folder_id: int,
+    on_progress: Callable[[int, int], None] | None = None,
+    only_stems: set[str] | None = None,
+) -> dict:
+    """Run AI on shots in a folder. Propagates results to all member photos.
+
+    When `only_stems` is given, restrict the AI pass to just those stems — used
+    by subset scans so picking 6 files doesn't re-run AI over the whole folder.
+    """
     with tx() as conn:
         rows = conn.execute(
             """
@@ -190,6 +198,8 @@ def run_ai_for_folder(folder_id: int, on_progress: Callable[[int, int], None] | 
             (folder_id,),
         ).fetchall()
     shots = [dict(r) for r in rows]
+    if only_stems is not None:
+        shots = [s for s in shots if s["stem"] in only_stems]
 
     total = len(shots)
     done = 0
