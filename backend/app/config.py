@@ -4,11 +4,31 @@ import os
 from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parent.parent.parent
-DATA_DIR = ROOT_DIR / "data"
+
+# Resources (read-only): model weights, frontend build. In the packaged .app
+# these live inside Contents/Resources; in dev they live next to the repo's
+# data/ folder. Override with TAILORBIRD_RESOURCES_DIR.
+_RES_ENV = os.environ.get("TAILORBIRD_RESOURCES_DIR")
+RESOURCES_DIR = Path(_RES_ENV).expanduser() if _RES_ENV else ROOT_DIR / "data"
+
+# User data (writable): sqlite db, thumbnails, decoded medium-size cache,
+# stacked output. In the packaged .app we redirect to
+# ~/Library/Application Support/tailorbird/. Override with TAILORBIRD_DATA_DIR.
+_DATA_ENV = os.environ.get("TAILORBIRD_DATA_DIR")
+DATA_DIR = Path(_DATA_ENV).expanduser() if _DATA_ENV else ROOT_DIR / "data"
+
 THUMBS_DIR = DATA_DIR / "thumbs"
 MEDIUM_DIR = DATA_DIR / "medium"
-MODELS_DIR = DATA_DIR / "models"
+MODELS_DIR = RESOURCES_DIR / "models"
 DB_PATH = DATA_DIR / "tailorbird.db"
+
+# Frontend build directory; the packaged launcher points this at
+# Contents/Resources/frontend_dist.
+_FRONTEND_ENV = os.environ.get("TAILORBIRD_FRONTEND_DIST")
+FRONTEND_DIST = (
+    Path(_FRONTEND_ENV).expanduser() if _FRONTEND_ENV
+    else ROOT_DIR / "frontend" / "dist"
+)
 
 THUMB_SIZE = 320
 RAW_EXTS = {".arw", ".nef", ".nrw", ".cr2", ".cr3", ".raf", ".orf", ".rw2", ".dng"}
@@ -34,4 +54,7 @@ API_PORT = int(os.environ.get("TAILORBIRD_PORT", "7891"))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 THUMBS_DIR.mkdir(parents=True, exist_ok=True)
 MEDIUM_DIR.mkdir(parents=True, exist_ok=True)
-MODELS_DIR.mkdir(parents=True, exist_ok=True)
+# MODELS_DIR is under RESOURCES_DIR and may be read-only (inside .app bundle);
+# only create it if we own it (dev mode where it coincides with DATA_DIR).
+if RESOURCES_DIR == DATA_DIR:
+    MODELS_DIR.mkdir(parents=True, exist_ok=True)

@@ -11,6 +11,9 @@ node_modules/
 dist/
 .vite/
 
+# PyInstaller build workpath (intermediate; the bundle goes to dist/)
+build/
+
 # OS
 .DS_Store
 
