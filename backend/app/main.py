@@ -19,7 +19,7 @@ def _normalize(folder: str | None) -> str | None:
         return None
     return str(Path(folder).expanduser().resolve())
 
-from app.config import API_PORT, SKILL_PRESETS, DEFAULT_SKILL
+from app.config import API_PORT, SKILL_PRESETS, DEFAULT_SKILL, HEIF_EXTS, JPEG_EXTS, RAW_EXTS
 from app.core.deleter import delete_photos, list_recent_batches
 from app.core.exif_writer import write_xmp, clear_xmp
 from app.core.file_mover import move_photos
@@ -493,10 +493,45 @@ def list_shots(
     return {"total": len(items), "items": items}
 
 
+# Rank for picking the best render source among siblings sharing a stem.
+# Counter-intuitive: ARW wins because rawpy.extract_thumb pulls Sony's full-res
+# in-camera Fine JPEG embedded in the ARW (~500 ms full pipeline). HIF requires
+# decoding the entire 60 MP 10-bit HDR image (~2200 ms — 3-4× slower) and Sony
+# doesn't embed a preview thumbnail. JPG decode matches ARW's embedded path.
+_RENDER_RANK = {
+    **{e: 0 for e in RAW_EXTS},
+    **{e: 1 for e in JPEG_EXTS},
+    **{e: 2 for e in HEIF_EXTS},
+}
+
+
+def _pick_render_row(conn, photo_id: int, columns: str) -> dict | None:
+    """Return the DB row to actually render for `photo_id`, picking the
+    fastest-decoding sibling when one exists (see _RENDER_RANK)."""
+    self_row = conn.execute(
+        f"SELECT id, folder_id, stem, ext, {columns} FROM photos WHERE id=?",
+        (photo_id,),
+    ).fetchone()
+    if not self_row:
+        return None
+    sibs = conn.execute(
+        f"""SELECT id, folder_id, stem, ext, {columns} FROM photos
+            WHERE folder_id=? AND stem=? AND id!=? AND deleted_at IS NULL""",
+        (self_row["folder_id"], self_row["stem"], photo_id),
+    ).fetchall()
+    best = self_row
+    best_rank = _RENDER_RANK.get(self_row["ext"], 9)
+    for s in sibs:
+        r = _RENDER_RANK.get(s["ext"], 9)
+        if r < best_rank:
+            best, best_rank = s, r
+    return best
+
+
 @app.get("/api/thumb/{photo_id}")
 def get_thumb(photo_id: int):
     with tx() as conn:
-        row = conn.execute("SELECT thumb_path FROM photos WHERE id=?", (photo_id,)).fetchone()
+        row = _pick_render_row(conn, photo_id, "thumb_path")
     if not row or not row["thumb_path"]:
         raise HTTPException(404, "thumbnail missing")
     p = Path(row["thumb_path"])
@@ -535,9 +570,7 @@ def get_full(photo_id: int, max_side: int = 2400):
     """Return a JPEG preview. Uses the cached medium preview when available
     (avoiding RAW decode entirely); otherwise decodes on demand."""
     with tx() as conn:
-        row = conn.execute(
-            "SELECT path, medium_path FROM photos WHERE id=?", (photo_id,)
-        ).fetchone()
+        row = _pick_render_row(conn, photo_id, "path, medium_path")
     if not row:
         raise HTTPException(404, "photo not found")
 
