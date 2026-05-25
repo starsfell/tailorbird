@@ -350,7 +350,11 @@ export default function App() {
   const openCompare = () => {
     const list = shots.filter(s => selected.has(s.primary_id))
     if (list.length < 2) { alert('请至少选 2 张'); return }
-    if (list.length > 9) { alert('最多 9 张同时对比'); return }
+    if (list.length > 9) {
+      const byStem = [...list].sort((a, b) => a.stem.localeCompare(b.stem))
+      setCompare(byStem.slice(0, 9))
+      return
+    }
     setCompare(list)
   }
 
