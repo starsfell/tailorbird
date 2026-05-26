@@ -350,12 +350,13 @@ export default function App() {
   const openCompare = () => {
     const list = shots.filter(s => selected.has(s.primary_id))
     if (list.length < 2) { alert('请至少选 2 张'); return }
-    if (list.length > 9) {
-      const byStem = [...list].sort((a, b) => a.stem.localeCompare(b.stem))
-      setCompare(byStem.slice(0, 9))
-      return
-    }
-    setCompare(list)
+    const final = list.length > 9
+      ? [...list].sort((a, b) => a.stem.localeCompare(b.stem)).slice(0, 9)
+      : list
+    setCompare(final)
+    // 打开对比后清空"已选":不管下一次关对比走哪条路径(Esc/移出对比自动关/删剩下),
+    // 再回到网格点别的图,下次 C 进对比就只看新选,不带旧组。
+    setSelected(new Set())
   }
 
   useEffect(() => {
