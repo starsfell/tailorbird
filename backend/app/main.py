@@ -24,6 +24,7 @@ from app.core.deleter import delete_photos, list_recent_batches
 from app.core.exif_writer import write_xmp, clear_xmp
 from app.core.file_mover import move_photos
 from app.core.scanner import ScanProgress, scan_folder
+from app.core.wakelock import WakeLock
 from app.db.schema import init_db, tx
 
 
@@ -68,11 +69,12 @@ def start_scan(req: ScanReq) -> dict:
         _scan_state["folder"] = req.folder or _common_parent(req.files)
 
         def _runner() -> None:
-            try:
-                scan_folder(req.folder, progress=progress, files=req.files)
-            except Exception as e:
-                progress.phase = "error"
-                progress.current_path = f"{type(e).__name__}: {e}"
+            with WakeLock():
+                try:
+                    scan_folder(req.folder, progress=progress, files=req.files)
+                except Exception as e:
+                    progress.phase = "error"
+                    progress.current_path = f"{type(e).__name__}: {e}"
 
         t = threading.Thread(target=_runner, daemon=True)
         _scan_state["thread"] = t
@@ -1546,16 +1548,17 @@ def recompute(req: RecomputeReq) -> dict:
                 _scan_state["progress"] = progress
 
                 def _runner(fid=fid) -> None:
-                    try:
-                        from app.core.ai_pipeline import run_ai_for_folder
-                        def _cb(d, t):
-                            progress.done = d; progress.total = t
-                        run_ai_for_folder(fid, on_progress=_cb)
-                        _apply_ratings(fid, skill=req.preset)
-                        progress.phase = "done"
-                    except Exception as e:
-                        progress.phase = "error"
-                        progress.current_path = f"{type(e).__name__}: {e}"
+                    with WakeLock():
+                        try:
+                            from app.core.ai_pipeline import run_ai_for_folder
+                            def _cb(d, t):
+                                progress.done = d; progress.total = t
+                            run_ai_for_folder(fid, on_progress=_cb)
+                            _apply_ratings(fid, skill=req.preset)
+                            progress.phase = "done"
+                        except Exception as e:
+                            progress.phase = "error"
+                            progress.current_path = f"{type(e).__name__}: {e}"
 
                 t = threading.Thread(target=_runner, daemon=True)
                 _scan_state["thread"] = t
@@ -1600,15 +1603,16 @@ def start_stack(req: StackReq) -> dict:
         _stack_tasks[task_id] = progress
 
     def _runner() -> None:
-        run_stack(
-            photo_ids=req.photo_ids,
-            anchor_id=req.anchor_id,
-            source=req.source,
-            mode=req.mode,
-            align=req.align,
-            full_size=req.full_size,
-            progress=progress,
-        )
+        with WakeLock():
+            run_stack(
+                photo_ids=req.photo_ids,
+                anchor_id=req.anchor_id,
+                source=req.source,
+                mode=req.mode,
+                align=req.align,
+                full_size=req.full_size,
+                progress=progress,
+            )
 
     t = threading.Thread(target=_runner, daemon=True)
     t.start()
