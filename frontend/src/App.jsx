@@ -422,7 +422,7 @@ export default function App() {
     setCompare(prev => {
       if (!prev) return null
       const next = prev.filter(s => s.primary_id !== shot.primary_id)
-      return next.length < 2 ? null : next
+      return next.length === 0 ? null : next
     })
     setSelected(prev => {
       const next = new Set(prev)
@@ -444,7 +444,7 @@ export default function App() {
     setCompare(prev => {
       if (!prev) return null
       const next = prev.filter(s => !idSet.has(s.primary_id))
-      return next.length < 2 ? null : next
+      return next.length === 0 ? null : next
     })
     setSelected(prev => {
       const next = new Set(prev)
