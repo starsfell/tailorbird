@@ -21,7 +21,7 @@ export function Tile({ shot, selected, onToggle, onOpen, showTags = false }) {
   return (
     <div
       className={cls.join(' ')}
-      onClick={() => onToggle(shot.primary_id)}
+      onClick={(e) => onToggle(shot.primary_id, e)}
       onDoubleClick={(e) => { e.stopPropagation(); onOpen && onOpen(shot) }}
       title={`${shot.stem}  ${shot.formats.join('+')}  sharp ${sharpLabel}${eyeLabel ? '  eye ' + eyeLabel : ''}${aesLabel ? '  aes ' + aesLabel : ''}`}
     >

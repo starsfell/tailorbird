@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react'
+import React, { useMemo, useRef } from 'react'
 import { Tile } from './Tile.jsx'
 
 export function Grid({ shots, selected, setSelected, onOpen }) {
@@ -24,12 +24,33 @@ export function Grid({ shots, selected, setSelected, onOpen }) {
     return sorted
   }, [shots])
 
-  const onToggle = (id) => {
+  // Flat display order across all groups — Shift+click selects the range in this order.
+  const flatIds = useMemo(() => groups.flatMap(g => g.shots.map(s => s.primary_id)), [groups])
+
+  const anchorIdRef = useRef(null)
+
+  const handleTileClick = (id, e) => {
+    if (e?.shiftKey && anchorIdRef.current != null && anchorIdRef.current !== id) {
+      const a = flatIds.indexOf(anchorIdRef.current)
+      const b = flatIds.indexOf(id)
+      if (a >= 0 && b >= 0) {
+        const [lo, hi] = a < b ? [a, b] : [b, a]
+        setSelected(prev => {
+          const next = new Set(prev)
+          for (let i = lo; i <= hi; i++) next.add(flatIds[i])
+          return next
+        })
+        // Clear browser text selection that Shift+click may have created.
+        try { window.getSelection()?.removeAllRanges() } catch {}
+        return
+      }
+    }
     setSelected(prev => {
       const next = new Set(prev)
       if (next.has(id)) next.delete(id); else next.add(id)
       return next
     })
+    anchorIdRef.current = id
   }
 
   const selectGroupNonBest = (group) => {
@@ -71,7 +92,7 @@ export function Grid({ shots, selected, setSelected, onOpen }) {
                 key={s.primary_id}
                 shot={s}
                 selected={selected.has(s.primary_id)}
-                onToggle={onToggle}
+                onToggle={handleTileClick}
                 onOpen={onOpen}
               />
             ))}
