@@ -12,6 +12,7 @@ import time
 import uuid
 from pathlib import Path
 
+from app.core.deleter import _clear_write_protection
 from app.db.schema import tx
 
 
@@ -56,10 +57,17 @@ def move_photos(photo_ids: list[int], subfolder_name: str = "ToReview", pair_wit
         if dest.exists():
             dest = dest_dir / f"{src.stem}_{int(now)}{src.suffix}"
         try:
+            # macOS "Locked" (uchg) / read-only files block rename. Clear the
+            # protection up front so shutil.move renames cleanly on the same
+            # volume — otherwise it falls back to copy+delete, copystat would
+            # duplicate the locked flag onto dest, and the delete of the locked
+            # original would fail, leaving a stray copy behind.
+            _clear_write_protection(src)
             shutil.move(str(src), str(dest))
             rec["new_path"] = str(dest)
             successes.append(rec)
         except Exception as e:
+            print(f"[move] FAILED {rec['path']}: {type(e).__name__}: {e}", flush=True)
             failures.append({**rec, "error": f"{type(e).__name__}: {e}"})
 
     with tx() as conn:

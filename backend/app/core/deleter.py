@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import stat
 import time
 import uuid
 from pathlib import Path
@@ -7,6 +9,31 @@ from pathlib import Path
 from send2trash import send2trash
 
 from app.db.schema import tx
+
+
+def _clear_write_protection(p: Path) -> None:
+    """Remove macOS lock flag (uchg) and add the owner write bit so the file
+    can be trashed. Best-effort: ignore anything we can't change."""
+    try:
+        # Clear user/file flags such as UF_IMMUTABLE ("Locked" in Finder).
+        if hasattr(os, "chflags"):
+            os.chflags(str(p), 0)
+    except OSError:
+        pass
+    try:
+        st = p.stat()
+        os.chmod(str(p), st.st_mode | stat.S_IWUSR)
+    except OSError:
+        pass
+
+
+def _trash(p: Path) -> None:
+    """Send a file to trash, retrying once after clearing write protection."""
+    try:
+        send2trash(str(p))
+    except Exception:
+        _clear_write_protection(p)
+        send2trash(str(p))
 
 
 def delete_photos(photo_ids: list[int], pair_with_sidecar: bool = True) -> dict:
@@ -48,9 +75,10 @@ def delete_photos(photo_ids: list[int], pair_with_sidecar: bool = True) -> dict:
         p = Path(rec["path"])
         try:
             if p.exists():
-                send2trash(str(p))
+                _trash(p)
             successes.append(rec)
         except Exception as e:
+            print(f"[delete] FAILED {rec['path']}: {type(e).__name__}: {e}", flush=True)
             failures.append({**rec, "error": f"{type(e).__name__}: {e}"})
 
     with tx() as conn:

@@ -1408,7 +1408,7 @@ def empty_move_target(req: EmptyMoveTargetReq) -> dict:
     permanently discard them in one click. Files go to system trash (recoverable),
     not direct rm.
     """
-    from send2trash import send2trash
+    from app.core.deleter import _trash
 
     root = Path(_normalize(req.folder) or "")
     if not root.exists() or not root.is_dir():
@@ -1432,7 +1432,7 @@ def empty_move_target(req: EmptyMoveTargetReq) -> dict:
             if not f.is_file():
                 continue
             try:
-                send2trash(str(f))
+                _trash(f)
                 trashed.append(str(f))
             except Exception as e:
                 failed.append({"path": str(f), "error": f"{type(e).__name__}: {e}"})
