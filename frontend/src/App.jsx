@@ -13,6 +13,9 @@ import { TriageView } from './TriageView.jsx'
 import { StackDialog } from './StackDialog.jsx'
 import { HomeView } from './HomeView.jsx'
 
+const REFINE_TAG = '精修'   // 批量打"精修"标签 / 移动到「精修」子文件夹用的固定标签名
+const KEEP_TAG = '保留'     // 批量打"保留"标签用的固定标签名
+
 const PHASE_LABEL = {
   idle: '空闲',
   scanning: '扫描目录…',
@@ -169,6 +172,15 @@ export default function App() {
     for (const s of shots) for (const t of (s.tags || [])) m.set(t.id, (m.get(t.id) || 0) + 1)
     return m
   }, [shots])
+
+  // 选中的照片是否「全部」已带某标签 → 决定按钮是"取消"(实心)还是"添加"(空心)。
+  const [allSelectedRefined, allSelectedKept] = useMemo(() => {
+    if (selected.size === 0) return [false, false]
+    const sel = shots.filter(s => selected.has(s.primary_id))
+    if (sel.length === 0) return [false, false]
+    const everyHas = (name) => sel.every(s => (s.tags || []).some(t => t.name === name))
+    return [everyHas(REFINE_TAG), everyHas(KEEP_TAG)]
+  }, [shots, selected])
 
   // Continuous poll of scan status — works regardless of who started the run
   useEffect(() => {
@@ -327,6 +339,42 @@ export default function App() {
       if (failed) alert(`完成,${failed} 失败`)
       return true
     } catch (e) { alert('删除失败: ' + e.message); return false }
+  }
+
+  // 切换选中照片的某个标签:remove=true 取消,否则添加(标签不存在后端会自动建)。
+  const onToggleTag = async (tagName, remove, overrideIds) => {
+    const ids = overrideIds ? Array.from(overrideIds) : Array.from(selected)
+    if (ids.length === 0) return
+    try {
+      if (remove) {
+        const tag = allTags.find(t => t.name === tagName)
+        if (!tag) return
+        await api.batchPhotoTags(ids, { remove_tag_ids: [tag.id] })
+      } else {
+        await api.batchPhotoTags(ids, { add_tag_names: [tagName] })
+      }
+      await refreshShots()
+      setTagsTick(t => t + 1)
+    } catch (e) { alert('标签操作失败: ' + e.message) }
+  }
+
+  // 把所有带「精修」标签的照片移动到各自源目录下的「精修」子文件夹(没有就自动建)。
+  const onMoveRefineToSubfolder = async () => {
+    const tag = allTags.find(t => t.name === REFINE_TAG)
+    if (!tag) { alert(`还没有任何「${REFINE_TAG}」标签的照片`); return }
+    const ok = window.confirm(
+      `把所有带「${REFINE_TAG}」标签的照片移动到各自目录下的「${REFINE_TAG}」子文件夹?\n(子文件夹不存在会自动创建,含 ARW/HIF 配对)`
+    )
+    if (!ok) return
+    try {
+      const r = await api.moveTagToSubfolder(tag.id)
+      const moved = r.moved?.length || 0
+      const failed = r.failed?.length || 0
+      await refreshShots()
+      setSimilarTick(t => t + 1)
+      if (moved === 0 && failed === 0) { alert(`没有可移动的「${REFINE_TAG}」照片`); return }
+      alert(`已移动 ${moved} 个文件到「${REFINE_TAG}」子文件夹` + (failed ? `,失败 ${failed} 个` : ''))
+    } catch (e) { alert('移动失败: ' + e.message) }
   }
 
   const onWriteXmp = async () => {
@@ -729,6 +777,18 @@ export default function App() {
             <label htmlFor="pair">成对处理 ARW/HIF</label>
           </div>
 
+          <h3 style={{marginTop:20}}>精修</h3>
+          <div className="row">
+            <button
+              className="success"
+              style={{width:'100%'}}
+              onClick={onMoveRefineToSubfolder}
+              title={`把所有带「${REFINE_TAG}」标签的照片移动到各自目录下的「${REFINE_TAG}」子文件夹(不存在则自动创建)`}
+            >
+              移动精修到子文件夹
+            </button>
+          </div>
+
           <h3 style={{marginTop:20}}>EXIF 写回</h3>
           <button onClick={onWriteXmp} style={{width:'100%'}}>
             写星级到原文件
@@ -799,6 +859,22 @@ export default function App() {
         <button onClick={openCompare} disabled={selected.size < 2}>对比 (C)</button>
         <button onClick={() => setStackDialogOpen(true)} disabled={selected.size < 2}>堆栈 (S)</button>
         <button onClick={() => setTagDialogIds(new Set(selected))} disabled={selected.size === 0}>+ 标签 (T)</button>
+        <button
+          className={allSelectedRefined ? 'success' : 'success-outline'}
+          onClick={() => onToggleTag(REFINE_TAG, allSelectedRefined)}
+          disabled={selected.size === 0}
+          title={allSelectedRefined ? '取消选中照片的「精修」标签' : '给选中的照片批量加「精修」标签'}
+        >
+          {allSelectedRefined ? `取消精修 (${selected.size})` : `精修 (${selected.size})`}
+        </button>
+        <button
+          className={allSelectedKept ? 'keep' : 'keep-outline'}
+          onClick={() => onToggleTag(KEEP_TAG, allSelectedKept)}
+          disabled={selected.size === 0}
+          title={allSelectedKept ? '取消选中照片的「保留」标签' : '给选中的照片批量加「保留」标签'}
+        >
+          {allSelectedKept ? `取消保留 (${selected.size})` : `保留 (${selected.size})`}
+        </button>
         <button onClick={() => setSelected(new Set())} disabled={selected.size === 0}>清空</button>
         <button className="danger" disabled={selected.size === 0} onClick={() => onDelete()}>
           {deleteMode === 'move' ? `移走 (${selected.size})` : `废纸篓 (${selected.size})`}

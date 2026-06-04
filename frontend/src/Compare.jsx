@@ -5,6 +5,8 @@ import { TagQuickBar } from './TagQuickBar.jsx'
 
 const ZOOM_DEFAULT = 5.0  // 500%
 const COMPARE_SOURCE_PX = 6400
+const REFINE_TAG = '精修'   // 与 App.jsx 一致:批量"精修"标签名
+const KEEP_TAG = '保留'     // 与 App.jsx 一致:批量"保留"标签名
 
 // Side-by-side comparison with linked pan/zoom by default.
 //
@@ -85,6 +87,30 @@ export function Compare({ shots, onClose, onDelete, onRemove, onBatchDelete, onB
     setIndepT({})
   }
 
+  const hasTag = (s, name) => (s.tags || []).some(t => t.name === name)
+
+  // 切换某标签:remove=true 取消,否则添加(后端不存在时自动建)。堆栈结果跳过。
+  const toggleTag = async (tagName, targetShots, remove) => {
+    const ids = targetShots.filter(s => !s.isStackResult).map(s => s.primary_id)
+    if (ids.length === 0) return
+    try {
+      if (remove) {
+        const tag = (allTags || []).find(t => t.name === tagName)
+        if (!tag) return
+        await api.batchPhotoTags(ids, { remove_tag_ids: [tag.id] })
+      } else {
+        await api.batchPhotoTags(ids, { add_tag_names: [tagName] })
+      }
+      onTagsApplied?.()
+    } catch (e) { alert('标签操作失败: ' + e.message) }
+  }
+
+  // 是否"全部已带该标签" → 决定按钮是"取消"(实心)还是"添加"(空心)。
+  const allPickedRefined = pickedShots.length > 0 && pickedShots.every(s => hasTag(s, REFINE_TAG))
+  const allPickableRefined = pickableShots.length > 0 && pickableShots.every(s => hasTag(s, REFINE_TAG))
+  const allPickedKept = pickedShots.length > 0 && pickedShots.every(s => hasTag(s, KEEP_TAG))
+  const allPickableKept = pickableShots.length > 0 && pickableShots.every(s => hasTag(s, KEEP_TAG))
+
   useEffect(() => {
     const onKey = (e) => {
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return
@@ -141,11 +167,33 @@ export function Compare({ shots, onClose, onDelete, onRemove, onBatchDelete, onB
               <button onClick={clearPick} title="清空选择 (Esc)">清空</button>
               <button onClick={() => { onBatchRemove?.(pickedShots); clearPick() }}
                 title="把选中从对比里移出,不删文件">移出对比 ({pickedIds.size})</button>
+              <button className={allPickedRefined ? 'success' : 'success-outline'}
+                onClick={() => toggleTag(REFINE_TAG, pickedShots, allPickedRefined)}
+                title={allPickedRefined ? '取消选中照片的「精修」标签' : '给选中的照片加「精修」标签'}>
+                {allPickedRefined ? `取消精修 (${pickedIds.size})` : `精修 (${pickedIds.size})`}
+              </button>
+              <button className={allPickedKept ? 'keep' : 'keep-outline'}
+                onClick={() => toggleTag(KEEP_TAG, pickedShots, allPickedKept)}
+                title={allPickedKept ? '取消选中照片的「保留」标签' : '给选中的照片加「保留」标签'}>
+                {allPickedKept ? `取消保留 (${pickedIds.size})` : `保留 (${pickedIds.size})`}
+              </button>
               <button className="danger" onClick={() => { onBatchDelete?.(pickedShots); clearPick() }}
                 title="按当前删除模式删选中 (D)">{`删除 (${pickedIds.size})`}</button>
             </>
           ) : (
-            <button onClick={pickAll} title="全选所有对比中的图 (A)">A 全选</button>
+            <>
+              <button onClick={pickAll} title="全选所有对比中的图 (A)">A 全选</button>
+              <button className={allPickableRefined ? 'success' : 'success-outline'}
+                onClick={() => toggleTag(REFINE_TAG, pickableShots, allPickableRefined)}
+                title={allPickableRefined ? '取消全部对比照片的「精修」标签' : '给全部对比中的照片加「精修」标签'}>
+                {allPickableRefined ? '取消精修全部' : '精修全部'}
+              </button>
+              <button className={allPickableKept ? 'keep' : 'keep-outline'}
+                onClick={() => toggleTag(KEEP_TAG, pickableShots, allPickableKept)}
+                title={allPickableKept ? '取消全部对比照片的「保留」标签' : '给全部对比中的照片加「保留」标签'}>
+                {allPickableKept ? '取消保留全部' : '保留全部'}
+              </button>
+            </>
           )}
           <button onClick={resetView}>0 重置</button>
           <button onClick={() => setLinked(v => !v)}>{linked ? '解除联动' : '开启联动'}</button>
@@ -191,7 +239,21 @@ export function Compare({ shots, onClose, onDelete, onRemove, onBatchDelete, onB
                 <span style={{color:'var(--muted)', fontVariantNumeric:'tabular-nums'}}>
                   {s.isStackResult ? '' : (eye ? `眼${eye}` : `主${subj}`)}
                 </span>
-                <span style={{display:'flex', gap:6}}>
+                <span style={{display:'flex', gap:6, alignItems:'center'}}>
+                  {!s.isStackResult && (
+                    <>
+                      <button
+                        className={'refine-dot' + (hasTag(s, REFINE_TAG) ? ' on' : '')}
+                        onClick={(e) => { e.stopPropagation(); toggleTag(REFINE_TAG, [s], hasTag(s, REFINE_TAG)) }}
+                        title={hasTag(s, REFINE_TAG) ? '已精修 · 点击取消' : '标记为精修'}
+                      >精</button>
+                      <button
+                        className={'keep-dot' + (hasTag(s, KEEP_TAG) ? ' on' : '')}
+                        onClick={(e) => { e.stopPropagation(); toggleTag(KEEP_TAG, [s], hasTag(s, KEEP_TAG)) }}
+                        title={hasTag(s, KEEP_TAG) ? '已保留 · 点击取消' : '标记为保留'}
+                      >保</button>
+                    </>
+                  )}
                   <button
                     onClick={(e) => {
                       e.stopPropagation()

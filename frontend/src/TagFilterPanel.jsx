@@ -8,6 +8,13 @@ const PRESET_COLORS = [
   null, '#e85a5a', '#f29b3a', '#ffd866', '#4dd0a0', '#5a78ff', '#b88cff', '#ff6fa3',
 ]
 
+// 这两个标签从普通标签树里单独拉出来,固定置顶,彩色加粗显示。
+const PINNED_TAGS = [
+  { name: '精修', color: 'var(--success)' },
+  { name: '保留', color: 'var(--keep)' },
+]
+const PINNED_NAMES = PINNED_TAGS.map(p => p.name)
+
 function TagContextMenu({ tag, anchor, allTags, onClose, onChanged, onDeleted, onCreateChild, onMove, onExport, onQuickMove }) {
   const [renaming, setRenaming] = useState(false)
   const [name, setName] = useState(tag.name)
@@ -302,8 +309,14 @@ export function TagFilterPanel({
   const pruned = useMemo(() => pruneTree(roots, q.trim()), [roots, q])
 
   const isFav = (n) => n.is_favorite
-  const favRoots = pruned.filter(isFav)
-  const nonFavRoots = pruned.filter(n => !isFav(n))
+  const isPinned = (n) => PINNED_NAMES.includes(n.name)
+  const favRoots = pruned.filter(n => isFav(n) && !isPinned(n))
+  const nonFavRoots = pruned.filter(n => !isFav(n) && !isPinned(n))
+
+  // 置顶标签:按 PINNED_TAGS 的顺序取真实标签(存在才显示)。
+  const pinnedNodes = PINNED_TAGS
+    .map(p => ({ ...p, tag: allTags.find(t => t.name === p.name) }))
+    .filter(p => p.tag)
 
   const toggle = (id) => {
     setTagFilter(prev => {
@@ -367,6 +380,35 @@ export function TagFilterPanel({
           <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', margin:'6px 0'}}>
             <span style={{fontSize:11, color:'var(--muted)'}}>已选 {tagFilter.size}</span>
             <button onClick={() => setTagFilter(new Set())} style={{padding:'2px 6px', fontSize:11}}>清空</button>
+          </div>
+        )}
+        {pinnedNodes.length > 0 && (
+          <div className="pinned-tags">
+            {pinnedNodes.map(({ name, color, tag }) => {
+              const active = tagFilter.has(tag.id)
+              const directCount = countsByTag?.get(tag.id)
+              return (
+                <div key={tag.id}
+                  className={'tag-row' + (active ? ' active' : '')}
+                  onClick={() => toggle(tag.id)}
+                  onContextMenu={(e) => { e.preventDefault(); setCtx({ tag, anchor: { x: e.clientX, y: e.clientY } }) }}
+                  title="点击切换筛选 · 右键管理"
+                >
+                  <span className="name">
+                    <span className={'cmp-pick' + (active ? ' on' : '')} style={{minWidth:14, display:'inline-block', textAlign:'center'}}>
+                      {active ? '✓' : ''}
+                    </span>
+                    <span className="swatch" style={{ background: color }} />
+                    <span style={{ color, fontWeight: 700, marginLeft: 2 }}>{name}</span>
+                  </span>
+                  <span className="count" style={{ color, fontWeight: 700 }}>
+                    {countsByTag && countsByTag.size > 0 && directCount != null
+                      ? `${directCount}/${tag.usage_count}`
+                      : tag.usage_count}
+                  </span>
+                </div>
+              )
+            })}
           </div>
         )}
         {setStatusFilter && (

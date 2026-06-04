@@ -8,6 +8,8 @@
   --accent: #4dd0a0;
   --warn: #f29b3a;
   --danger: #e85a5a;
+  --success: #3fae5a;
+  --keep: #e8b923;
 }
 
 * { box-sizing: border-box; }
@@ -37,6 +39,44 @@ button:hover { background: #1f2228; }
 button:disabled { opacity: 0.45; cursor: not-allowed; }
 button.primary { background: var(--accent); color: #0a1612; border-color: var(--accent); }
 button.danger { background: var(--danger); color: white; border-color: var(--danger); }
+button.success { background: var(--success); color: white; border-color: var(--success); }
+button.success:hover { background: #4cbf6a; }
+/* 未精修态:绿字、绿边、无底色;精修态用上面的实心 .success */
+button.success-outline { background: transparent; color: var(--success); border-color: var(--success); }
+button.success-outline:hover { background: color-mix(in srgb, var(--success) 14%, transparent); }
+
+/* 对比单元格里的「精」圆点:实心=已精修,空心绿字=未精修 */
+.refine-dot {
+  width: 22px; height: 22px; padding: 0;
+  border-radius: 50%;
+  font-size: 11px; line-height: 1; font-weight: 600;
+  background: transparent;
+  color: var(--success);
+  border: 1.5px solid var(--success);
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.refine-dot:hover { background: color-mix(in srgb, var(--success) 16%, transparent); }
+.refine-dot.on { background: var(--success); color: #fff; }
+.refine-dot.on:hover { background: #4cbf6a; }
+
+/* 保留(黄色):实心=已保留,空心黄字=未保留 */
+button.keep { background: var(--keep); color: #2a2000; border-color: var(--keep); }
+button.keep:hover { background: #f3c734; }
+button.keep-outline { background: transparent; color: var(--keep); border-color: var(--keep); }
+button.keep-outline:hover { background: color-mix(in srgb, var(--keep) 16%, transparent); }
+
+.keep-dot {
+  width: 22px; height: 22px; padding: 0;
+  border-radius: 50%;
+  font-size: 11px; line-height: 1; font-weight: 600;
+  background: transparent;
+  color: var(--keep);
+  border: 1.5px solid var(--keep);
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.keep-dot:hover { background: color-mix(in srgb, var(--keep) 18%, transparent); }
+.keep-dot.on { background: var(--keep); color: #2a2000; }
+.keep-dot.on:hover { background: #f3c734; }
 
 input[type="text"], input[type="number"] {
   background: var(--bg-elev);
@@ -321,6 +361,12 @@ input:focus { border-color: var(--accent); }
   padding: 4px 6px; border-radius: 4px; cursor: pointer; font-size: 12px;
   gap: 6px;
 }
+/* 置顶的精修/保留:略大字号 + 下分隔线,和下面的星级/状态分开 */
+.tag-panel .pinned-tags {
+  padding-bottom: 6px; margin-bottom: 2px;
+  border-bottom: 1px solid var(--border);
+}
+.tag-panel .pinned-tags .tag-row { font-size: 13px; }
 .tag-panel .tag-row:hover { background: #20242c; }
 .tag-panel .tag-row.active {
   background: #1f3a32; color: var(--text);
