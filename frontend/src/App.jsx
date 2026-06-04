@@ -418,6 +418,7 @@ export default function App() {
       if (stackDialogOpen) return
       if (e.key === 'a' || e.key === 'A') { e.preventDefault(); setSelected(new Set(shots.map(s => s.primary_id))) }
       else if (e.key === 'Escape') { setSelected(new Set()) }
+      else if (e.key === 'm' || e.key === 'M') { e.preventDefault(); setSelected(new Set()) }
       else if (e.key === 'b' || e.key === 'B') {
         const ids = shots.filter(s => s.cluster_id != null && !s.is_cluster_best).map(s => s.primary_id)
         setSelected(new Set(ids))
@@ -800,7 +801,7 @@ export default function App() {
           <h3 style={{marginTop:20}}>快捷键</h3>
           <div style={{fontSize:11, color:'var(--muted)', lineHeight:1.7}}>
             单击 选 · 双击/Space 放大<br/>
-            A 全选 · Esc 清空<br/>
+            A 全选 · M/Esc 清空<br/>
             B 选所有非组内最佳<br/>
             C 对比 · D 删除
           </div>
@@ -875,7 +876,7 @@ export default function App() {
         >
           {allSelectedKept ? `取消保留 (${selected.size})` : `保留 (${selected.size})`}
         </button>
-        <button onClick={() => setSelected(new Set())} disabled={selected.size === 0}>清空</button>
+        <button onClick={() => setSelected(new Set())} disabled={selected.size === 0}>清空 (M)</button>
         <button className="danger" disabled={selected.size === 0} onClick={() => onDelete()}>
           {deleteMode === 'move' ? `移走 (${selected.size})` : `废纸篓 (${selected.size})`}
         </button>
