@@ -2,7 +2,7 @@ import React, { useMemo, useRef } from 'react'
 import { Tile } from './Tile.jsx'
 
 export function Grid({ shots, selected, setSelected, onOpen }) {
-  // Group shots by cluster_id for visual separation; within each cluster sort by sharpness desc.
+  // Group shots by cluster_id for visual separation; within each cluster sort by filename (stem).
   const groups = useMemo(() => {
     const buckets = new Map()
     const orphans = []
@@ -16,7 +16,7 @@ export function Grid({ shots, selected, setSelected, onOpen }) {
     }
     const sorted = Array.from(buckets.entries())
       .map(([cid, arr]) => {
-        arr.sort((a, b) => (b.subject_sharpness || 0) - (a.subject_sharpness || 0))
+        arr.sort((a, b) => (a.stem || '').localeCompare(b.stem || '', undefined, { numeric: true }))
         return { cid, shots: arr, earliest: Math.min(...arr.map(s => s.shot_at || Infinity)) }
       })
       .sort((a, b) => a.earliest - b.earliest)

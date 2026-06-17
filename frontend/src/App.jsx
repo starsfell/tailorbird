@@ -35,6 +35,12 @@ export default function App() {
   const [openMenuOpen, setOpenMenuOpen] = useState(false)   // "打开 ▾" 下拉是否展开
   const [subsetStems, setSubsetStems] = useState(new Set())   // 子集扫描后只看刚扫描的这些 stem;空=看整目录
   const [tab, setTab] = useState('grid')
+  const [handMode, setHandMode] = useState(() => localStorage.getItem('birdye_hand') || 'left')   // 'left'=左手键 'right'=左撇子右手键
+  useEffect(() => { localStorage.setItem('birdye_hand', handMode) }, [handMode])
+  // 各动作两套键, 按当前手别取一个用于按钮/帮助提示(快捷键监听两套始终都生效)
+  const HK = handMode === 'right'
+    ? { all: 'O', clear: 'M', best: 'N', del: 'J', delAll: 'P', compare: 'L', tag: ';', stack: 'S', finder: 'U' }
+    : { all: 'A', clear: 'M', best: 'B', del: 'D', delAll: 'P', compare: 'C', tag: 'T', stack: 'S', finder: 'R' }
   const [scanStatus, setScanStatus] = useState(null)
   const [shots, setShots] = useState([])
   const [shotsBeforeTagFilter, setShotsBeforeTagFilter] = useState([])
@@ -416,22 +422,25 @@ export default function App() {
         return
       }
       if (stackDialogOpen) return
-      if (e.key === 'a' || e.key === 'A') { e.preventDefault(); setSelected(new Set(shots.map(s => s.primary_id))) }
+      // 左手键(A/D/C/T/B/R…)与右手键(L/J/K/;/N/U…)双套并行,方便左撇子右手操作。
+      const k = e.key.toLowerCase()
+      if (k === 'a' || k === 'o') { e.preventDefault(); setSelected(new Set(shots.map(s => s.primary_id))) }   // 全选
       else if (e.key === 'Escape') { setSelected(new Set()) }
-      else if (e.key === 'm' || e.key === 'M') { e.preventDefault(); setSelected(new Set()) }
-      else if (e.key === 'b' || e.key === 'B') {
+      else if (k === 'm') { e.preventDefault(); setSelected(new Set()) }   // 清空
+      else if (k === 'b' || k === 'n') {   // 选非最佳
         const ids = shots.filter(s => s.cluster_id != null && !s.is_cluster_best).map(s => s.primary_id)
         setSelected(new Set(ids))
       }
-      else if (e.key === 'd' || e.key === 'D') { e.preventDefault(); onDelete() }
-      else if (e.key === 'c' || e.key === 'C') { e.preventDefault(); openCompare() }
-      else if (e.key === 't' || e.key === 'T') {
+      else if (k === 'p') { e.preventDefault(); onDelete(new Set(shots.map(s => s.primary_id))) }   // 全选删除(删全部当前可见,有二次确认)
+      else if (k === 'd' || k === 'j') { e.preventDefault(); onDelete() }   // 删除
+      else if (k === 'c' || k === 'l') { e.preventDefault(); openCompare() }   // 对比
+      else if (k === 't' || e.key === ';') {   // 打标签
         if (selected.size > 0) { e.preventDefault(); setTagDialogIds(new Set(selected)) }
       }
-      else if (e.key === 's' || e.key === 'S') {
+      else if (k === 's') {   // 堆栈(仅左手键)
         if (selected.size >= 2) { e.preventDefault(); setStackDialogOpen(true) }
       }
-      else if (e.key === 'r' || e.key === 'R') {
+      else if (k === 'r' || k === 'u') {   // Finder
         if (selected.size > 0) {
           e.preventDefault()
           const firstId = [...selected][0]
@@ -448,9 +457,12 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey)
   }, [shots, selected, detail, compare, tagDialogIds, stackDialogOpen])
 
-  const statusText = scanStatus
-    ? `${PHASE_LABEL[scanStatus.phase] || scanStatus.phase}${scanStatus.total ? ` ${scanStatus.done}/${scanStatus.total}` : ''}`
-    : ''
+  const statusText = [
+    scanStatus
+      ? `${PHASE_LABEL[scanStatus.phase] || scanStatus.phase}${scanStatus.total ? ` ${scanStatus.done}/${scanStatus.total}` : ''}`
+      : '',
+    total ? `共 ${total} 张${shots.length !== total ? ` · 筛后 ${shots.length}` : ''}` : '',
+  ].filter(Boolean).join('  ·  ')
 
   const handleDetailDelete = async (shot) => {
     const ok = await onDelete([shot.primary_id])
@@ -798,12 +810,20 @@ export default function App() {
             Lightroom 等可读取
           </div>
 
-          <h3 style={{marginTop:20}}>快捷键</h3>
+          <h3 style={{marginTop:20}}>
+            快捷键
+            <button onClick={() => setHandMode(m => m === 'left' ? 'right' : 'left')}
+              style={{marginLeft:8, fontSize:10, padding:'1px 6px'}}
+              title="切换提示:左手键 / 左撇子右手键(两套始终都能用)">
+              {handMode === 'right' ? '右手' : '左手'} ⇄
+            </button>
+          </h3>
           <div style={{fontSize:11, color:'var(--muted)', lineHeight:1.7}}>
             单击 选 · 双击/Space 放大<br/>
-            A 全选 · M/Esc 清空<br/>
-            B 选所有非组内最佳<br/>
-            C 对比 · D 删除
+            全选 {HK.all} · 删除 {HK.del} · 对比 {HK.compare}<br/>
+            全选删除 {HK.delAll} · 标签 {HK.tag}<br/>
+            选非最佳 {HK.best} · Finder {HK.finder}<br/>
+            清空 {HK.clear} · 堆栈 {HK.stack}
           </div>
         </aside>
 
@@ -857,9 +877,13 @@ export default function App() {
         <div>共 {total} shot{shots.length !== total ? `,筛后 ${shots.length}` : ''}</div>
         <div>已选 {selected.size}</div>
         <div className="spacer" />
-        <button onClick={openCompare} disabled={selected.size < 2}>对比 (C)</button>
-        <button onClick={() => setStackDialogOpen(true)} disabled={selected.size < 2}>堆栈 (S)</button>
-        <button onClick={() => setTagDialogIds(new Set(selected))} disabled={selected.size === 0}>+ 标签 (T)</button>
+        <button onClick={() => setHandMode(m => m === 'left' ? 'right' : 'left')}
+          title="切换快捷键提示:左手键 / 左撇子右手键(两套始终都能用,只切换按钮上显示哪一套)">
+          {handMode === 'right' ? '⌨ 右手键' : '⌨ 左手键'}
+        </button>
+        <button onClick={openCompare} disabled={selected.size < 2}>{`对比 (${HK.compare})`}</button>
+        <button onClick={() => setStackDialogOpen(true)} disabled={selected.size < 2}>{`堆栈 (${HK.stack})`}</button>
+        <button onClick={() => setTagDialogIds(new Set(selected))} disabled={selected.size === 0}>{`+ 标签 (${HK.tag})`}</button>
         <button
           className={allSelectedRefined ? 'success' : 'success-outline'}
           onClick={() => onToggleTag(REFINE_TAG, allSelectedRefined)}
@@ -876,8 +900,8 @@ export default function App() {
         >
           {allSelectedKept ? `取消保留 (${selected.size})` : `保留 (${selected.size})`}
         </button>
-        <button onClick={() => setSelected(new Set())} disabled={selected.size === 0}>清空 (M)</button>
-        <button className="danger" disabled={selected.size === 0} onClick={() => onDelete()}>
+        <button onClick={() => setSelected(new Set())} disabled={selected.size === 0}>{`清空 (${HK.clear})`}</button>
+        <button className="danger" disabled={selected.size === 0} onClick={() => onDelete()} title={`删除选中 (${HK.del})`}>
           {deleteMode === 'move' ? `移走 (${selected.size})` : `废纸篓 (${selected.size})`}
         </button>
       </div>

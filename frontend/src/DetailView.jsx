@@ -231,13 +231,15 @@ export function DetailView({ shots, startIndex = 0, onClose, onDelete, onRefresh
         if (e.key === 'Escape') { setAnnotMode(null); setManual({ bbox: null, eye: null }) }
         return
       }
+      // 左手键(D/R/←→)与右手键(J/U/;/L)双套并行。右手 J=删除,故翻页用 ;(下)/L(上)。
+      const k = e.key.toLowerCase()
       if (e.key === 'Escape') onClose()
-      else if (e.key === 'ArrowRight' || e.key === 'j' || e.key === 'J')
+      else if (k === 'd' || k === 'j') { if (shot) onDelete?.(shot) }   // 删除
+      else if (e.key === 'ArrowRight' || e.key === ';')   // 下一张
         setIdx(i => Math.min(shots.length - 1, i + 1))
-      else if (e.key === 'ArrowLeft' || e.key === 'k' || e.key === 'K')
+      else if (e.key === 'ArrowLeft' || k === 'k' || k === 'l')   // 上一张
         setIdx(i => Math.max(0, i - 1))
-      else if (e.key === 'd' || e.key === 'D') { if (shot) onDelete?.(shot) }
-      else if (e.key === 'r' || e.key === 'R') {
+      else if (k === 'r' || k === 'u') {   // Finder
         if (shot) {
           e.preventDefault()
           api.revealInFinder(shot.primary_id).catch(err => alert('打开 Finder 失败: ' + err.message))
@@ -316,11 +318,11 @@ export function DetailView({ shots, startIndex = 0, onClose, onDelete, onRefresh
             </div>
             <div style={{display:'flex', gap:8}}>
               <button onClick={() => api.revealInFinder(shot.primary_id).catch(e => alert(e.message))}
-                title="在 Finder 中显示这张照片 (R)">📁 Finder</button>
+                title="在 Finder 中显示这张照片 (R / U)">📁 Finder</button>
               <button onClick={startAnnotate} title="手动标注鸟框和眼位">手动标注</button>
-              <button onClick={() => setIdx(i => Math.max(0, i - 1))} disabled={idx === 0}>← K</button>
-              <button onClick={() => setIdx(i => Math.min(shots.length - 1, i + 1))} disabled={idx >= shots.length - 1}>J →</button>
-              <button className="danger" onClick={() => onDelete?.(shot)}>D 删除</button>
+              <button onClick={() => setIdx(i => Math.max(0, i - 1))} disabled={idx === 0} title="上一张 (← / K / L)">← 上一张</button>
+              <button onClick={() => setIdx(i => Math.min(shots.length - 1, i + 1))} disabled={idx >= shots.length - 1} title="下一张 (→ / ;)">下一张 →</button>
+              <button className="danger" onClick={() => onDelete?.(shot)} title="删除 (D / J)">删除</button>
               <button onClick={onClose}>Esc 关闭</button>
             </div>
           </>

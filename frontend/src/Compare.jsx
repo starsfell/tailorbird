@@ -114,13 +114,15 @@ export function Compare({ shots, onClose, onDelete, onRemove, onBatchDelete, onB
   useEffect(() => {
     const onKey = (e) => {
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return
+      // 左手键(A/D/S/R)与右手键(L/J/K/U)双套并行。
+      const k = e.key.toLowerCase()
       if (e.key === 'Escape') {
         if (pickedIds.size > 0) clearPick()
         else onClose()
       }
-      else if (e.key === 's' || e.key === 'S') setLinked(v => !v)
+      else if (k === 's' || k === 'k') setLinked(v => !v)   // 联动
       else if (e.key === '0') resetView()
-      else if (e.key === 'r' || e.key === 'R') {
+      else if (k === 'r' || k === 'u') {   // Finder
         // Reveal the first picked, else the first non-stack compared shot.
         const target = pickedShots[0] || pickableShots[0]
         if (target) {
@@ -131,8 +133,11 @@ export function Compare({ shots, onClose, onDelete, onRemove, onBatchDelete, onB
           p.catch(err => alert('打开 Finder 失败: ' + err.message))
         }
       }
-      else if (e.key === 'a' || e.key === 'A') { e.preventDefault(); pickAll() }
-      else if (e.key === 'd' || e.key === 'D') {
+      else if (k === 'a' || k === 'o') { e.preventDefault(); pickAll() }   // 全选
+      else if (k === 'p') {   // 全选删除 = 删除全部对比中的图
+        if (pickableShots.length > 0) { e.preventDefault(); onBatchDelete?.(pickableShots) }
+      }
+      else if (k === 'd' || k === 'j') {   // 删选
         if (pickedShots.length > 0) {
           e.preventDefault()
           onBatchDelete?.(pickedShots)
@@ -155,14 +160,14 @@ export function Compare({ shots, onClose, onDelete, onRemove, onBatchDelete, onB
             对比 {n} 张 · {linked ? '联动 (500% 对鸟眼/鸟身/中心)' : '独立操作'}
           </div>
           <div style={{fontSize:11, color:'var(--muted)', marginTop:2}}>
-            点格子标题栏加入多选(图片区不受影响,可自由拖动) · A 全选 · D 删选 · R Finder · S 联动 · 0 重置 · Esc 关闭
+            点格子标题栏加入多选(图片区不受影响,可自由拖动) · 全选 A/O · 删选 D/J · 删除全部 P · Finder R/U · 联动 S/K · 0 重置 · Esc 关闭
           </div>
         </div>
         <div style={{display:'flex', gap:8, alignItems:'center'}}>
           {pickedIds.size > 0 ? (
             <>
               <span style={{fontSize:12, color:'var(--accent)'}}>已选 {pickedIds.size}</span>
-              <button onClick={pickAll} title="全选 (A)">全选</button>
+              <button onClick={pickAll} title="全选 (A / O)">全选</button>
               <button onClick={invertPick}>反选</button>
               <button onClick={clearPick} title="清空选择 (Esc)">清空</button>
               <button onClick={() => { onBatchRemove?.(pickedShots); clearPick() }}
@@ -178,11 +183,11 @@ export function Compare({ shots, onClose, onDelete, onRemove, onBatchDelete, onB
                 {allPickedKept ? `取消保留 (${pickedIds.size})` : `保留 (${pickedIds.size})`}
               </button>
               <button className="danger" onClick={() => { onBatchDelete?.(pickedShots); clearPick() }}
-                title="按当前删除模式删选中 (D)">{`删除 (${pickedIds.size})`}</button>
+                title="按当前删除模式删选中 (D / J)">{`删除 (${pickedIds.size})`}</button>
             </>
           ) : (
             <>
-              <button onClick={pickAll} title="全选所有对比中的图 (A)">A 全选</button>
+              <button onClick={pickAll} title="全选所有对比中的图 (A / O)">A 全选</button>
               <button className={allPickableRefined ? 'success' : 'success-outline'}
                 onClick={() => toggleTag(REFINE_TAG, pickableShots, allPickableRefined)}
                 title={allPickableRefined ? '取消全部对比照片的「精修」标签' : '给全部对比中的照片加「精修」标签'}>
@@ -193,6 +198,8 @@ export function Compare({ shots, onClose, onDelete, onRemove, onBatchDelete, onB
                 title={allPickableKept ? '取消全部对比照片的「保留」标签' : '给全部对比中的照片加「保留」标签'}>
                 {allPickableKept ? '取消保留全部' : '保留全部'}
               </button>
+              <button className="danger" onClick={() => onBatchDelete?.(pickableShots)}
+                title="按当前删除模式删除所有对比中的图 (P)">{`删除全部 (${pickableShots.length})`}</button>
             </>
           )}
           <button onClick={resetView}>0 重置</button>
@@ -263,7 +270,7 @@ export function Compare({ shots, onClose, onDelete, onRemove, onBatchDelete, onB
                       p.catch(err => alert(err.message))
                     }}
                     style={{padding:'2px 8px'}}
-                    title="在 Finder 中显示 (R)"
+                    title="在 Finder 中显示 (R / U)"
                   >📁</button>
                   {!s.isStackResult && (
                     <>
