@@ -170,8 +170,8 @@ export function Compare({ shots, onClose, onDelete, onRemove, onBatchDelete, onB
               <button onClick={pickAll} title="全选 (A / O)">全选</button>
               <button onClick={invertPick}>反选</button>
               <button onClick={clearPick} title="清空选择 (Esc)">清空</button>
-              <button onClick={() => { onBatchRemove?.(pickedShots); clearPick() }}
-                title="把选中从对比里移出,不删文件">移出对比 ({pickedIds.size})</button>
+              <button className="danger" onClick={() => { onBatchDelete?.(pickedShots); clearPick() }}
+                title="按当前删除模式删选中 (D / J)">{`删除 (${pickedIds.size})`}</button>
               <button className={allPickedRefined ? 'success' : 'success-outline'}
                 onClick={() => toggleTag(REFINE_TAG, pickedShots, allPickedRefined)}
                 title={allPickedRefined ? '取消选中照片的「精修」标签' : '给选中的照片加「精修」标签'}>
@@ -182,8 +182,8 @@ export function Compare({ shots, onClose, onDelete, onRemove, onBatchDelete, onB
                 title={allPickedKept ? '取消选中照片的「保留」标签' : '给选中的照片加「保留」标签'}>
                 {allPickedKept ? `取消保留 (${pickedIds.size})` : `保留 (${pickedIds.size})`}
               </button>
-              <button className="danger" onClick={() => { onBatchDelete?.(pickedShots); clearPick() }}
-                title="按当前删除模式删选中 (D / J)">{`删除 (${pickedIds.size})`}</button>
+              <button onClick={() => { onBatchRemove?.(pickedShots); clearPick() }}
+                title="把选中从对比里移出,不删文件">移出对比 ({pickedIds.size})</button>
             </>
           ) : (
             <>
