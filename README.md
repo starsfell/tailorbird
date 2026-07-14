@@ -241,7 +241,8 @@ pick = 1 ⇔ rating == 3 且分数在所有 3 星中位于 top 25%
 ```bash
 # 1. 双击 .app(日常使用)
 #    第一次:把 tailorbird.app 拖到 /Applications,然后 Launchpad / Spotlight 搜 "tailorbird"
-#    内部会自动 build 前端 + 起后端(detach 到后台)+ 在 Chrome 里全屏开浏览器
+#    内部起的是打包好的后端二进制(detach 到后台)+ 在 Chrome 里全屏开浏览器 ——
+#    不会自动 build,改了源码要重新打包才生效,见下面「怎么打包」
 open /Applications/tailorbird.app
 
 # 退出后端
@@ -271,9 +272,24 @@ cd frontend && npm run dev                                     # 终端 2
 
 ### tailorbird.app 是怎么打包的
 
-不是 Tauri/Electron,就是手写的 macOS bundle:`Contents/MacOS/tailorbird` 一行 `exec` 调 `scripts/start_prod.sh`,`Contents/Resources/AppIcon.icns` 由 `assets/AppIcon.svg` 走 `scripts/build_icon.sh` 生成(遵循 macOS Big Sur+ icon grid:tile 824×824 居中,rx=185)。`ROOT` 在 launcher 里写死成项目绝对路径——所以**项目目录别改名/搬位置**;真要搬,改一下 `tailorbird.app/Contents/MacOS/tailorbird` 里那行 `ROOT=` 就行。
+不是 Tauri/Electron,是 PyInstaller 冻结后端 + 手写的 macOS bundle 壳:
 
-`start_prod.sh` 用 `nohup … & disown` 把 uvicorn 放到后台,launcher 进程立即退出 —— 这样 macOS 不会把 bundle 锁成"运行中",反复点图标都能可靠地把 Chrome 拉到前台并最大化(`scripts/open_browser.sh` 用 Cocoa `visibleFrame` 算可用区域,避开菜单栏和 Dock)。代价是 Dock → Quit 失效,退出后端跑 `scripts/quit_prod.sh`。日志 `>>/tmp/tailorbird.log`。
+- `Contents/MacOS/tailorbird` = `packaging/launcher.sh`,几行 shell:先探测 7891 是否已在跑(在跑就直接拉浏览器、退出),否则把 `Contents/Resources/backend/tailorbird-backend`(PyInstaller onedir 冻结的 FastAPI 后端,内含 torch/opencv 等全部依赖)`nohup … & disown` 到后台,轮询 `/api/health` 就绪后 `open` 浏览器,自己立即退出——这样 macOS 不会把 bundle 锁成"运行中",反复点图标都能可靠地把浏览器拉到前台。代价是 Dock → Quit 失效,退出后端跑 `scripts/quit_prod.sh`。
+- 前端是**预先构建**好塞进 `Contents/Resources/frontend_dist` 的静态文件,不是运行时现 build。
+- 模型权重在 `Contents/Resources/models`,用户数据(SQLite / 缩略图 / 日志)写到 bundle 外的 `~/Library/Application Support/tailorbird`(`TAILORBIRD_DATA_DIR` 可覆盖),因为 bundle 本身只读。
+- `Contents/Resources/AppIcon.icns` 由 `assets/AppIcon.svg` 走 `scripts/build_icon.sh` 生成(遵循 macOS Big Sur+ icon grid:tile 824×824 居中,rx=185)。
+
+**改了 `backend/` 或 `frontend/` 源码之后,`/Applications/tailorbird.app` 不会自动更新** —— 没有 CI、没有 watcher,重新打包安装是纯手动四步:
+
+```bash
+cd frontend && npm run build && cd ..                                          # 前端
+conda run -n tailorbird pyinstaller packaging/tailorbird.spec \
+  --distpath dist --workpath build -y                                          # 后端(重依赖,几分钟)
+./packaging/build_app.sh                                                       # 组装 dist/tailorbird.app + ad-hoc 签名
+./packaging/update_local.sh                                                    # 原地覆盖 /Applications/tailorbird.app
+```
+
+日常改代码调试**不要**走这个流程——太慢。用 `scripts/start.sh`(前后端分离热更新)或 `scripts/start_prod.sh`(单端口跑源码,前端有变化会自动重 build,但后端不会冻结打包)。只有正式要更新 Dock 里那个 `.app` 时才跑上面四步。
 
 ---
 
@@ -525,9 +541,8 @@ sqlite3 data/tailorbird.db "SELECT rating, COUNT(*) FROM photos WHERE deleted_at
 | 详情视图打不开 | 看后端有没有报「rawpy can't extract thumb」;有些第三方 RAW 没有内嵌全分辨率预览 |
 | 对比视图无鸟图黑屏 | 老版本 bug,已修复:无鸟图现在以图心为锚点参与联动;若仍黑,Cmd+Shift+R 强刷 |
 | HF 模型下载失败,SSL 错误 | 装 `socksio`:`pip install socksio`,然后再试一次 `python scripts/download_models.py` |
-| 点 .app 没反应 / Chrome 不开 | 检查端口:`lsof -i :7891`。后端还在就跑 `scripts/quit_prod.sh` 再点 .app;日志在 `/tmp/tailorbird.log` |
-| 双击 .app 后日志报 `npm: command not found` | Finder 启动的 shell 不加载 `~/.zshrc`,PATH 里没有 brew。`scripts/start_prod.sh` 顶部已 `export PATH="/opt/homebrew/bin:..."`,如果你装的 npm 不在那里,改成你自己的路径 |
-| 改前端代码后 .app 启动一直卡 | 启动脚本在前端源码比 `frontend/dist/` 新时会自动 rebuild。手动加速:`cd frontend && npm run build` 一次,下次启动直接走缓存 |
+| 点 .app 没反应 / Chrome 不开 | 检查端口:`lsof -i :7891`。后端还在就跑 `scripts/quit_prod.sh` 再点 .app;日志在 `~/Library/Application Support/tailorbird/tailorbird.log` |
+| 改了 `backend/` 或 `frontend/` 源码,双击 .app 还是旧行为 | `.app` 里的后端是 PyInstaller 冻结的二进制、前端是预 build 的静态文件,都**不会**跟着源码自动更新。改完要重新打包安装,见「tailorbird.app 是怎么打包的」那四步 |
 | 改了 SVG 重生成图标后 /Applications 里还是旧的 | macOS 系统级 icon cache 没刷,跑 `sudo rm -rf /Library/Caches/com.apple.iconservices.store && sudo killall iconservicesd Dock Finder`;注意 `/Applications/tailorbird.app` 是独立拷贝,`build_icon.sh` 会同步两份 |
 
 ---
@@ -537,7 +552,6 @@ sqlite3 data/tailorbird.db "SELECT rating, COUNT(*) FROM photos WHERE deleted_at
 - [ ] 鸟种识别(11000+ 种):SuperPicky 模型加密用不了,需另寻方案
 - [ ] 自动按星级整理到 `0star / 1star / 2star / 3star` 子文件夹
 - [ ] 送系统废纸篓的撤销:目前「撤销」只对"移到子文件夹"模式有效,`trash` 模式的文件进了 macOS Trash,还查不到、也就撤不回来
-- [ ] PyInstaller 打包成单个 `.app`,双击启动
 - [ ] Windows / Linux 适配(目前只测过 macOS Apple Silicon)
 - [ ] 相似分组结果的客户端防抖,大目录拖滑块时不抖
 - [ ] 堆栈 RAW 模式 full_size 用流式 Welford 在线均值,避免 60MP × N 帧的 8GB+ 内存峰值
