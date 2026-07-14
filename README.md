@@ -205,6 +205,7 @@ pick = 1 ⇔ rating == 3 且分数在所有 3 星中位于 top 25%
   - **送系统废纸篓**:走 macOS Trash,符合系统习惯。
 - 「在 Finder 中打开」按钮通过 `/api/find-move-target` 递归查找扫描根下所有同名子目录,**优先打开非空那个**,确保不会被误开到一个空目录。
 - **成对删除**:默认 ARW + HIF 同 stem 一起处理(可关)。
+- **撤销**:网格 / 对比 / 详情三个界面底部或右上角都有「↩ 撤销」按钮,快捷键 `Z`。不传具体批次时默认撤销"最近一次还没撤销过的批次",可以连续按 `Z` 一步步往回撤(历史没有条数上限,底栏 ▾ 面板只展示最近 5 步,可以点具体某一步单独撤销)。原理是把文件从 `ToReview/` 等子文件夹移回原路径,并把 `deleted_at` 清空——**只对"移到子文件夹"模式有效**;送系统废纸篓的文件走的是 macOS Trash,这里没法撤销,历史面板会标注「不可撤销」,请去系统废纸篓手动还原。
 
 ---
 
@@ -225,10 +226,11 @@ pick = 1 ⇔ rating == 3 且分数在所有 3 星中位于 top 25%
 | 堆栈选中的 / 对比视图切换联动 | S | S / K(联动) |
 | 给选中的批量加 / 删标签 | T | ; |
 | 在 Finder 中显示第一张选中 | R | U |
+| 撤销上一步移走/删除(网格 / 对比 / 详情都可用) | Z | Z |
 | 详情页下一张 | → | ; |
 | 详情页上一张 | ← / K | L |
 
-> 详情页里 `J` = 删除(与网格一致),所以翻页用 `;`(下)/`L`(上),方向键 `←/→` 仍可用。
+> 详情页里 `J` = 删除(与网格一致),所以翻页用 `;`(下)/`L`(上),方向键 `←/→` 仍可用。`Z` 不分左右手,固定一个键。
 
 ---
 
@@ -264,6 +266,8 @@ cd frontend && npm run dev                                     # 终端 2
 - `start.sh` → http://localhost:5173(被占用会落到 5174),后端在 7891
 
 **首次扫描会下载 ~470 MB 模型权重**(走 Hugging Face),需稳定网络。后续启动只读本地。
+
+**扫描在后台跑,不影响你切到别的已扫描目录挑片、删除、打标签**——只有正在看"正在被扫描的那个目录"时网格才会清空只显示进度。同一时间后端只支持跑一个扫描任务,扫别的目录之前得等当前这个扫完。
 
 ### tailorbird.app 是怎么打包的
 
@@ -388,6 +392,7 @@ tailorbird/
 | `GET` | `/api/thumb/{id}` | 320px 缩略图(image/jpeg) |
 | `GET` | `/api/full/{id}?max_side=N` | 高分辨率预览 |
 | `POST` | `/api/delete` | 删除(body: `{photo_ids, pair_with_sidecar, mode, subfolder_name}`) |
+| `POST` | `/api/undo` | 撤销一批移走/删除(body: `{batch_id?}`,不传则撤销最近一次还没撤销过的批次) |
 | `POST` | `/api/exif/write` | 把星级 / Pick / Label 写入 XMP |
 | `POST` | `/api/exif/clear` | 清除星级 XMP |
 | `POST` | `/api/backfill-exif` | 重读 EXIF + 重跑自动标签;`{folder?, only_missing}` |
@@ -395,7 +400,7 @@ tailorbird/
 | `GET` | `/api/presets` | 预设列表 |
 | `POST` | `/api/presets/apply` | 应用预设(只重算评分,不重跑 AI) |
 | `POST` | `/api/recompute` | 重新聚类 + 评分(`run_ai=true` 也重跑 AI) |
-| `GET` | `/api/history` | 最近删除批次 |
+| `GET` | `/api/history?limit=N` | 最近 N 批移走/删除(默认 20),每条带 `action`(如 `move:ToReview`)、`n`(张数)、`restored_n`、`restorable_n` |
 | `POST` | `/api/open-folder` | 在 Finder 打开本机路径(限于扫描过的目录子路径) |
 | `POST` | `/api/reveal-path` | 在 Finder 高亮任意文件(目录则打开);限于扫描根内 |
 | `POST` | `/api/reveal` | 按 photo_id 在 Finder 高亮文件 |
@@ -459,7 +464,7 @@ SQLite,WAL 模式,启动时通过 `ALTER TABLE` 自动迁移新列。
 | `error` | TEXT | 处理异常信息 |
 | `analyzed_at` | REAL | AI 完成时间 |
 
-**deletion_history**:`batch_id` + `original_path` 记录每次删除,留出未来「撤销」的接口。
+**deletion_history**:每次移走/删除记一批(`batch_id`),每行 `original_path`(原路径)+ `new_path`(移到哪了,`trash` 模式为 NULL)+ `action`(如 `move:ToReview` / `trash`)+ `restored`(是否已撤销)。`/api/undo` 靠 `new_path` 把文件移回 `original_path`;`trash` 模式因为文件进了系统废纸篓,`new_path` 是 NULL,查不到就不撤销。
 
 ---
 
@@ -531,10 +536,9 @@ sqlite3 data/tailorbird.db "SELECT rating, COUNT(*) FROM photos WHERE deleted_at
 
 - [ ] 鸟种识别(11000+ 种):SuperPicky 模型加密用不了,需另寻方案
 - [ ] 自动按星级整理到 `0star / 1star / 2star / 3star` 子文件夹
-- [ ] 从 ToReview / 废纸篓批量恢复(`deletion_history` 已记录,接口未做)
+- [ ] 送系统废纸篓的撤销:目前「撤销」只对"移到子文件夹"模式有效,`trash` 模式的文件进了 macOS Trash,还查不到、也就撤不回来
 - [ ] PyInstaller 打包成单个 `.app`,双击启动
 - [ ] Windows / Linux 适配(目前只测过 macOS Apple Silicon)
-- [ ] 删除操作的「撤销最近一批」按钮(数据已备好)
 - [ ] 相似分组结果的客户端防抖,大目录拖滑块时不抖
 - [ ] 堆栈 RAW 模式 full_size 用流式 Welford 在线均值,避免 60MP × N 帧的 8GB+ 内存峰值
 - [ ] 拍摄参数自动标签加快门档(目前只做了 ISO/镜头/焦距/光圈,快门变化大没做)
