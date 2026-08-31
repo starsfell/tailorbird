@@ -191,7 +191,7 @@ function Overlays({ detail, manual, showAf, showBbox, showEye }) {
   return <>{items}</>
 }
 
-export function DetailView({ shots, startIndex = 0, onClose, onDelete, onRefresh }) {
+export function DetailView({ shots, startIndex = 0, onClose, onDelete, onUndo, onRefresh }) {
   const [idx, setIdx] = useState(startIndex)
   const [detail, setDetail] = useState(null)
   const [showAf, setShowAf] = useState(true)
@@ -235,6 +235,7 @@ export function DetailView({ shots, startIndex = 0, onClose, onDelete, onRefresh
       const k = e.key.toLowerCase()
       if (e.key === 'Escape') onClose()
       else if (k === 'd' || k === 'j') { if (shot) onDelete?.(shot) }   // 删除
+      else if (k === 'z') { e.preventDefault(); onUndo?.() }   // 撤销上一步移走/删除
       else if (e.key === 'ArrowRight' || e.key === ';')   // 下一张
         setIdx(i => Math.min(shots.length - 1, i + 1))
       else if (e.key === 'ArrowLeft' || k === 'k' || k === 'l')   // 上一张
@@ -248,7 +249,7 @@ export function DetailView({ shots, startIndex = 0, onClose, onDelete, onRefresh
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [shots, shot, onClose, onDelete, annotMode])
+  }, [shots, shot, onClose, onDelete, onUndo, annotMode])
 
   const startAnnotate = () => {
     setAnnotMode('rect')
@@ -323,6 +324,7 @@ export function DetailView({ shots, startIndex = 0, onClose, onDelete, onRefresh
               <button onClick={() => setIdx(i => Math.max(0, i - 1))} disabled={idx === 0} title="上一张 (← / K / L)">← 上一张</button>
               <button onClick={() => setIdx(i => Math.min(shots.length - 1, i + 1))} disabled={idx >= shots.length - 1} title="下一张 (→ / ;)">下一张 →</button>
               <button className="danger" onClick={() => onDelete?.(shot)} title="删除 (D / J)">删除</button>
+              <button onClick={() => onUndo?.()} title="撤销上一步移走/删除 (Z)">↩ 撤销</button>
               <button onClick={onClose}>Esc 关闭</button>
             </div>
           </>
@@ -356,7 +358,7 @@ export function DetailView({ shots, startIndex = 0, onClose, onDelete, onRefresh
       <div className="modal-hint">
         {annotMode
           ? '标注模式 · 黄虚线 = 正在画的鸟框 · 黄实线 = 已保存的框 · 黄点 = 眼位 · Esc 取消'
-          : '滚轮缩放 · 拖动平移 · 双击 100%/适应 · J/K 翻图 · 红框=相机 AF · 绿框=AI 鸟检测 · 黄点=AI 眼位'}
+          : '滚轮缩放 · 拖动平移 · 双击 100%/适应 · J/K 翻图 · Z 撤销 · 红框=相机 AF · 绿框=AI 鸟检测 · 黄点=AI 眼位'}
       </div>
     </div>
   )

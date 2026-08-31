@@ -20,7 +20,7 @@ def _normalize(folder: str | None) -> str | None:
     return str(Path(folder).expanduser().resolve())
 
 from app.config import API_PORT, SKILL_PRESETS, DEFAULT_SKILL, HEIF_EXTS, JPEG_EXTS, RAW_EXTS
-from app.core.deleter import delete_photos, list_recent_batches
+from app.core.deleter import delete_photos, list_recent_batches, latest_undoable_batch, restore_batch
 from app.core.exif_writer import write_xmp, clear_xmp
 from app.core.file_mover import move_photos
 from app.core.scanner import ScanProgress, scan_folder
@@ -616,6 +616,21 @@ def delete(req: DeleteReq) -> dict:
     return delete_photos(req.photo_ids, pair_with_sidecar=req.pair_with_sidecar)
 
 
+class UndoReq(BaseModel):
+    batch_id: Optional[str] = None   # omit to undo the most recent un-restored batch
+
+
+@app.post("/api/undo")
+def undo(req: UndoReq) -> dict:
+    """Undo a move/delete batch: moves files back to their original path and
+    un-marks them as deleted. Repeated calls with no batch_id walk further
+    back through history, one batch at a time."""
+    batch_id = req.batch_id or latest_undoable_batch()
+    if not batch_id:
+        raise HTTPException(404, "没有可撤销的操作")
+    return restore_batch(batch_id)
+
+
 class WriteXmpReq(BaseModel):
     photo_ids: list[int]
 
@@ -946,13 +961,15 @@ def export_tag(req: ExportTagReq) -> dict:
     if req.mode == "move" and successes:
         now = time.time()
         batch_id = uuid.uuid4().hex
+        action = f"move:{tag_name}"
         with tx() as conn:
             for rec in successes:
                 if rec.get("skipped"):
                     continue
                 conn.execute(
-                    "INSERT INTO deletion_history(batch_id, photo_id, original_path, deleted_at) VALUES(?, ?, ?, ?)",
-                    (batch_id, rec["id"], rec["path"], now),
+                    "INSERT INTO deletion_history(batch_id, photo_id, original_path, new_path, action, deleted_at) "
+                    "VALUES(?, ?, ?, ?, ?, ?)",
+                    (batch_id, rec["id"], rec["path"], rec.get("new_path"), action, now),
                 )
                 conn.execute("UPDATE photos SET deleted_at = ? WHERE id = ?", (now, rec["id"]))
 
@@ -1155,8 +1172,8 @@ def list_folders() -> dict:
 
 
 @app.get("/api/history")
-def history() -> dict:
-    return {"batches": list_recent_batches(20)}
+def history(limit: int = 20) -> dict:
+    return {"batches": list_recent_batches(limit)}
 
 
 @app.get("/api/health")

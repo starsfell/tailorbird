@@ -21,7 +21,7 @@ const KEEP_TAG = '保留'     // 与 App.jsx 一致:批量"保留"标签名
 //
 // S (or the button) disables linkage entirely; in that mode each photo is on
 // its own (still fit-to-cell initially).
-export function Compare({ shots, onClose, onDelete, onRemove, onBatchDelete, onBatchRemove, allTags, onTagsApplied }) {
+export function Compare({ shots, onClose, onDelete, onRemove, onBatchDelete, onBatchRemove, onUndo, allTags, onTagsApplied }) {
   const [linked, setLinked] = useState(true)
   const [shared, setShared] = useState({ scale: ZOOM_DEFAULT, offsetX: 0, offsetY: 0 })
   const [bases, setBases] = useState({})
@@ -144,10 +144,11 @@ export function Compare({ shots, onClose, onDelete, onRemove, onBatchDelete, onB
           clearPick()
         }
       }
+      else if (k === 'z') { e.preventDefault(); onUndo?.() }   // 撤销上一步移走/删除
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [onClose, shots, pickedIds])
+  }, [onClose, shots, pickedIds, onUndo])
 
   const n = shots.length
   const cols = n <= 1 ? 1 : n <= 4 ? 2 : 3
@@ -160,7 +161,7 @@ export function Compare({ shots, onClose, onDelete, onRemove, onBatchDelete, onB
             对比 {n} 张 · {linked ? '联动 (500% 对鸟眼/鸟身/中心)' : '独立操作'}
           </div>
           <div style={{fontSize:11, color:'var(--muted)', marginTop:2}}>
-            点格子标题栏加入多选(图片区不受影响,可自由拖动) · 全选 A/O · 删选 D/J · 删除全部 P · Finder R/U · 联动 S/K · 0 重置 · Esc 关闭
+            点格子标题栏加入多选(图片区不受影响,可自由拖动) · 全选 A/O · 删选 D/J · 删除全部 P · 撤销 Z · Finder R/U · 联动 S/K · 0 重置 · Esc 关闭
           </div>
         </div>
         <div style={{display:'flex', gap:8, alignItems:'center'}}>
@@ -204,6 +205,7 @@ export function Compare({ shots, onClose, onDelete, onRemove, onBatchDelete, onB
           )}
           <button onClick={resetView}>0 重置</button>
           <button onClick={() => setLinked(v => !v)}>{linked ? '解除联动' : '开启联动'}</button>
+          <button onClick={() => onUndo?.()} title="撤销上一步移走/删除 (Z)">↩ 撤销</button>
           <button onClick={onClose}>Esc 关闭</button>
         </div>
       </div>

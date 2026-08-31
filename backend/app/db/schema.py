@@ -59,6 +59,8 @@ CREATE TABLE IF NOT EXISTS deletion_history (
     batch_id TEXT NOT NULL,
     photo_id INTEGER NOT NULL,
     original_path TEXT NOT NULL,
+    new_path TEXT,             -- where the file actually landed; NULL = trashed (not restorable here)
+    action TEXT,                -- short label e.g. 'move:ToReview', 'trash'
     deleted_at REAL NOT NULL,
     restored INTEGER DEFAULT 0,
     FOREIGN KEY (photo_id) REFERENCES photos(id)
@@ -124,6 +126,12 @@ def init_db() -> None:
         for col, typ in migrations:
             if col not in cols:
                 conn.execute(f"ALTER TABLE photos ADD COLUMN {col} {typ}")
+        # Migrate deletion_history for undo support
+        dh_cols = {r[1] for r in conn.execute("PRAGMA table_info(deletion_history)").fetchall()}
+        if "new_path" not in dh_cols:
+            conn.execute("ALTER TABLE deletion_history ADD COLUMN new_path TEXT")
+        if "action" not in dh_cols:
+            conn.execute("ALTER TABLE deletion_history ADD COLUMN action TEXT")
         # Migrate tags table for hierarchy (Phase 3)
         tag_cols = {r[1] for r in conn.execute("PRAGMA table_info(tags)").fetchall()}
         if "parent_id" not in tag_cols:

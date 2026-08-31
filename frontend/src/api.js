@@ -50,6 +50,9 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ photo_ids, pair_with_sidecar, mode, subfolder_name }),
     }),
+  undo: (batch_id = null) =>
+    req('/api/undo', { method: 'POST', body: JSON.stringify({ batch_id }) }),
+  undoHistory: (limit = 5) => req('/api/history?limit=' + limit),
   writeXmp: (photo_ids) =>
     req('/api/exif/write', { method: 'POST', body: JSON.stringify({ photo_ids }) }),
   clearXmp: (photo_ids) =>

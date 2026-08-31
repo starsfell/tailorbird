@@ -70,11 +70,13 @@ def move_photos(photo_ids: list[int], subfolder_name: str = "ToReview", pair_wit
             print(f"[move] FAILED {rec['path']}: {type(e).__name__}: {e}", flush=True)
             failures.append({**rec, "error": f"{type(e).__name__}: {e}"})
 
+    action = f"move:{subfolder_name}"
     with tx() as conn:
         for rec in successes:
             conn.execute(
-                "INSERT INTO deletion_history(batch_id, photo_id, original_path, deleted_at) VALUES(?, ?, ?, ?)",
-                (batch_id, rec["id"], rec["path"], now),
+                "INSERT INTO deletion_history(batch_id, photo_id, original_path, new_path, action, deleted_at) "
+                "VALUES(?, ?, ?, ?, ?, ?)",
+                (batch_id, rec["id"], rec["path"], rec.get("new_path"), action, now),
             )
             conn.execute("UPDATE photos SET deleted_at=? WHERE id=?", (now, rec["id"]))
 
