@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useState } from 'react'
 
 function fmtTime(ts) {
   if (!ts) return '未扫描'
@@ -11,23 +11,28 @@ function fmtTime(ts) {
 }
 
 export function HomeView({ folders, busy, onPickFolder, onPickFiles, onOpenTask, onDeleteFolder }) {
+  const [runAi, setRunAi] = useState(true)
   return (
     <div className="home">
       <div className="home-hero">
         <h1 className="home-logo">tailorbird</h1>
         <p className="home-tagline">鸟类摄影挑片助手 · 选择照片，开始一次挑片任务</p>
         <div className="home-actions">
-          <button className="home-card" onClick={onPickFolder} disabled={busy}>
+          <button className="home-card" onClick={() => onPickFolder(runAi)} disabled={busy}>
             <div className="home-card-icon">📁</div>
             <div className="home-card-title">选择文件夹</div>
             <div className="home-card-sub">扫描整个文件夹里的照片</div>
           </button>
-          <button className="home-card" onClick={onPickFiles} disabled={busy}>
+          <button className="home-card" onClick={() => onPickFiles(runAi)} disabled={busy}>
             <div className="home-card-icon">🖼️</div>
             <div className="home-card-title">选择文件</div>
             <div className="home-card-sub">只挑选其中一部分照片</div>
           </button>
         </div>
+        <label className="home-ai-toggle" title="关闭后只抽预览图和 EXIF,跳过鸟类识别/眼部清晰度/美学评分,几万张照片会快很多;之后随时可以对已导入的文件夹「重跑 AI」补上">
+          <input type="checkbox" checked={runAi} onChange={e => setRunAi(e.target.checked)} disabled={busy} />
+          导入时进行 AI 分析(鸟类识别/评分,量大会较慢)
+        </label>
         {busy && <div className="home-busy">正在扫描，请稍候…</div>}
       </div>
 

@@ -155,6 +155,24 @@ input:focus { border-color: var(--accent); }
 }
 .open-menu button:hover { background: rgba(255,255,255,0.08); }
 
+/* 底部工具栏"撤销 ▾"历史面板,朝上展开(挂在 footer 里) */
+.undo-menu {
+  position: absolute; bottom: calc(100% + 4px); right: 0; z-index: 41;
+  display: flex; flex-direction: column; gap: 2px;
+  min-width: 220px; max-width: 320px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border, #333);
+  border-radius: 8px;
+  padding: 8px;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.4);
+}
+.undo-menu-item {
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 8px; padding: 4px 2px; font-size: 12px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+.undo-menu-item:last-child { border-bottom: none; }
+
 /* 子集视图横幅: 提示当前只看刚扫描的文件 */
 .subset-banner {
   display: flex; align-items: center; gap: 12px;
@@ -225,6 +243,17 @@ input:focus { border-color: var(--accent); }
 .home-card-icon { font-size: 34px; line-height: 1; }
 .home-card-title { font-size: 17px; font-weight: 600; color: var(--text, #e8e8e8); }
 .home-card-sub { font-size: 12px; color: var(--muted, #8a8f99); }
+.home-ai-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 18px;
+  color: var(--muted, #8a8f99);
+  font-size: 13px;
+  cursor: pointer;
+}
+.home-ai-toggle input { cursor: pointer; }
 .home-busy { margin-top: 24px; color: var(--accent, #4a9); font-size: 13px; }
 
 .home-history {

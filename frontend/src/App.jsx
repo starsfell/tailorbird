@@ -29,10 +29,15 @@ const PHASE_LABEL = {
 
 export default function App() {
   const [view, setView] = useState('home')   // 'home' 引导首页 | 'workspace' 挑片工作区
-  const scanningRef = useRef(false)   // 新任务扫描进行中: 网格清空只显示进度,不显示残留数据
+  // 记录后台正在扫描哪个目录(而不是"是否有扫描在跑"),这样切到别的已扫描目录时
+  // 网格不会被误清空 —— 只有正在看"正在扫描的那个目录"时才显示进度、不显示残留数据。
+  const scanningFolderRef = useRef(null)
   const [folder, setFolder] = useState('')
+  const folderRef = useRef(folder)   // 供扫描后台任务结束时判断"用户是否还在看这个目录"
+  useEffect(() => { folderRef.current = folder }, [folder])
   const [pickedFiles, setPickedFiles] = useState([])   // 用"选文件"挑出的文件子集
   const [openMenuOpen, setOpenMenuOpen] = useState(false)   // "打开 ▾" 下拉是否展开
+  const [undoMenuOpen, setUndoMenuOpen] = useState(false)   // "撤销 ▾" 历史面板是否展开
   const [subsetStems, setSubsetStems] = useState(new Set())   // 子集扫描后只看刚扫描的这些 stem;空=看整目录
   const [tab, setTab] = useState('grid')
   const [handMode, setHandMode] = useState(() => localStorage.getItem('birdye_hand') || 'left')   // 'left'=左手键 'right'=左撇子右手键
@@ -86,6 +91,14 @@ export default function App() {
   const [similarTick, setSimilarTick] = useState(0)   // bump to force SimilarView re-fetch
   const [tagDialogIds, setTagDialogIds] = useState(null)  // Set<id> | null
   const [stackDialogOpen, setStackDialogOpen] = useState(false)
+  const [undoHistory, setUndoHistory] = useState([])   // 最近几批移走/删除操作,供撤销面板用
+
+  const refreshUndoHistory = useCallback(async () => {
+    try {
+      const { batches } = await api.undoHistory(5)
+      setUndoHistory(batches || [])
+    } catch (e) { /* 静默失败即可,不影响主流程 */ }
+  }, [])
 
   const refreshFolders = useCallback(async () => {
     try {
@@ -97,8 +110,11 @@ export default function App() {
 
   const refreshShots = useCallback(async () => {
     if (!folder) return
-    // 新任务扫描进行中: 保持网格空白,只让顶栏显示进度,避免误导成"已有结果"
-    if (scanningRef.current) { setShots([]); setShotsBeforeTagFilter([]); setTotal(0); return }
+    // 只有当前正在看"正在被扫描的那个目录"时才清空网格只显示进度;
+    // 扫描其它目录时不影响这里的浏览/删除/打标签。
+    if (scanningFolderRef.current && scanningFolderRef.current === folder) {
+      setShots([]); setShotsBeforeTagFilter([]); setTotal(0); return
+    }
     try {
       const r = await api.listShots({ folder, min_sharpness: filter.min_sharpness, only_cluster_best: filter.only_cluster_best, sort_by: sortBy, sort_order: sortOrder, limit: 5000, include_deleted: false })
       let items = r.items
@@ -169,6 +185,7 @@ export default function App() {
 
   useEffect(() => { refreshFolders() }, [refreshFolders])
   useEffect(() => { refreshShots() }, [refreshShots])
+  useEffect(() => { refreshUndoHistory() }, [refreshUndoHistory])
   useEffect(() => {
     api.listTags().then(r => setAllTags(r.tags || [])).catch(() => {})
   }, [tagsTick])
@@ -211,8 +228,8 @@ export default function App() {
   const stemOf = (p) => (p.split('/').pop() || '').replace(/\.[^.]+$/, '')
 
   // 开始一次新扫描前: 清空网格 + 进入"扫描中"状态, 这样工作区只显示进度不显示残留
-  const beginFreshScan = () => {
-    scanningRef.current = true
+  const beginFreshScan = (target) => {
+    scanningFolderRef.current = target
     setSubsetStems(new Set()); setSelected(new Set())
     setShots([]); setShotsBeforeTagFilter([]); setTotal(0)
   }
@@ -220,10 +237,10 @@ export default function App() {
   const onScan = async (runAi = true, folderArg = null) => {
     const target = (folderArg ?? folder).trim()
     if (!target) return
-    beginFreshScan()
+    beginFreshScan(target)
     setBusy(true)
     try { await api.startScan(target, runAi) }
-    catch (e) { scanningRef.current = false; alert('扫描启动失败: ' + e.message); setBusy(false); return }
+    catch (e) { scanningFolderRef.current = null; alert('扫描启动失败: ' + e.message); setBusy(false); return }
     const wait = () => new Promise(r => setTimeout(r, 1500))
     while (true) {
       await wait()
@@ -232,17 +249,21 @@ export default function App() {
         if (s.phase === 'done' || s.phase === 'error' || s.phase === 'cancelled') break
       } catch (e) { break }
     }
-    scanningRef.current = false
-    setBusy(false); await refreshShots(); await refreshFolders()
+    scanningFolderRef.current = null
+    setBusy(false)
+    // 扫描完成时用户可能已经切到别的目录看;只有还在看这个目录才需要刷新它。
+    if (folderRef.current === target) await refreshShots()
+    await refreshFolders()
   }
 
   const onScanFiles = async (runAi = true, filesArg = null) => {
     const files = filesArg ?? pickedFiles
     if (!files.length) return
-    beginFreshScan()
+    const target = folder
+    beginFreshScan(target)
     setBusy(true)
     try { await api.startScanFiles(files, runAi) }
-    catch (e) { scanningRef.current = false; alert('扫描启动失败: ' + e.message); setBusy(false); return }
+    catch (e) { scanningFolderRef.current = null; alert('扫描启动失败: ' + e.message); setBusy(false); return }
     let phase = 'error'
     while (true) {
       await new Promise(r => setTimeout(r, 1500))
@@ -252,38 +273,41 @@ export default function App() {
         if (s.phase === 'done' || s.phase === 'error' || s.phase === 'cancelled') break
       } catch (e) { break }
     }
-    scanningRef.current = false
+    scanningFolderRef.current = null
+    const stillHere = folderRef.current === target
     if (phase === 'done') {
       // 扫描成功: 清空已选, 切到"只看刚扫描的这几张"子集视图
       const stems = new Set(files.map(stemOf))
       setPickedFiles([])
-      setSubsetStems(stems)   // 触发 refreshShots(经依赖变化), 故不在此手动刷新 shots
+      if (stillHere) setSubsetStems(stems)   // 触发 refreshShots(经依赖变化), 故不在此手动刷新 shots
       setBusy(false); await refreshFolders()
       return
     }
     // 失败/取消: 保留已选以便重试
-    setBusy(false); await refreshShots(); await refreshFolders()
+    setBusy(false)
+    if (stillHere) await refreshShots()
+    await refreshFolders()
   }
 
   // ── 首页(引导页)入口 ───────────────────────────────────────────────
   // 新建任务 = 选文件夹/文件 → 进入工作区并开始扫描; 历史 = 直接打开已扫描目录
-  const onHomePickFolder = async () => {
+  const onHomePickFolder = async (runAi = true) => {
     let r
     try { r = await api.pickFolder() } catch (e) { alert('打开选择框失败: ' + e.message); return }
     if (!r.path) return
     setFolder(r.path); setPickedFiles([]); setSubsetStems(new Set()); setView('workspace')
     const known = folders.some(f => f.path === r.path)
-    if (!known) await onScan(true, r.path)   // 新文件夹才扫描; 已扫过的直接打开
+    if (!known) await onScan(runAi, r.path)   // 新文件夹才扫描; 已扫过的直接打开
   }
 
-  const onHomePickFiles = async () => {
+  const onHomePickFiles = async (runAi = true) => {
     let r
     try { r = await api.pickFiles() } catch (e) { alert('打开选择框失败: ' + e.message); return }
     if (!r.files || !r.files.length) return
     setPickedFiles(r.files)
     if (r.folder) setFolder(r.folder)
     setView('workspace')
-    await onScanFiles(true, r.files)
+    await onScanFiles(runAi, r.files)
   }
 
   const onOpenTask = (path) => { setFolder(path); setPickedFiles([]); setSubsetStems(new Set()); setView('workspace') }
@@ -340,11 +364,46 @@ export default function App() {
       const r = await api.deletePhotos(ids, pairDelete, deleteMode, subfolderName)
       setSelected(prev => { const next = new Set(prev); ids.forEach(i => next.delete(i)); return next })
       await refreshShots()
+      await refreshUndoHistory()
       setSimilarTick(t => t + 1)
       const failed = r.failed?.length || 0
       if (failed) alert(`完成,${failed} 失败`)
       return true
     } catch (e) { alert('删除失败: ' + e.message); return false }
+  }
+
+  // 撤销最近一批移走/删除操作(不传 batchId 时后端自动挑"最近一次还没撤销过的批次")。
+  // 反复调用(比如反复按 Z)会一批批往回撤,历史上至少能撤 5 步。
+  const onUndo = async (batchId) => {
+    try {
+      const r = await api.undo(batchId ?? null)
+      const restored = r.restored?.length || 0
+      const failed = r.failed?.length || 0
+      await refreshShots()
+      await refreshUndoHistory()
+      setSimilarTick(t => t + 1)
+      if (restored === 0 && failed > 0) alert(`撤销失败: ${failed} 张 - ${r.failed[0]?.error || ''}`)
+      else if (failed > 0) alert(`已恢复 ${restored} 张,${failed} 张失败(${r.failed[0]?.error || ''})`)
+    } catch (e) {
+      if (String(e.message).startsWith('404')) alert('没有可撤销的操作了')
+      else alert('撤销失败: ' + e.message)
+    }
+  }
+
+  const describeUndoAction = (action) => {
+    if (!action) return '操作'
+    if (action === 'trash') return '送入废纸篓'
+    if (action.startsWith('move:')) return `移到「${action.slice(5)}」`
+    return action
+  }
+
+  const timeAgo = (at) => {
+    if (!at) return ''
+    const diff = Date.now() / 1000 - at
+    if (diff < 60) return '刚刚'
+    if (diff < 3600) return `${Math.floor(diff / 60)} 分钟前`
+    if (diff < 86400) return `${Math.floor(diff / 3600)} 小时前`
+    return `${Math.floor(diff / 86400)} 天前`
   }
 
   // 切换选中照片的某个标签:remove=true 取消,否则添加(标签不存在后端会自动建)。
@@ -377,6 +436,7 @@ export default function App() {
       const moved = r.moved?.length || 0
       const failed = r.failed?.length || 0
       await refreshShots()
+      await refreshUndoHistory()
       setSimilarTick(t => t + 1)
       if (moved === 0 && failed === 0) { alert(`没有可移动的「${REFINE_TAG}」照片`); return }
       alert(`已移动 ${moved} 个文件到「${REFINE_TAG}」子文件夹` + (failed ? `,失败 ${failed} 个` : ''))
@@ -433,6 +493,7 @@ export default function App() {
       }
       else if (k === 'p') { e.preventDefault(); onDelete(new Set(shots.map(s => s.primary_id))) }   // 全选删除(删全部当前可见,有二次确认)
       else if (k === 'd' || k === 'j') { e.preventDefault(); onDelete() }   // 删除
+      else if (k === 'z') { e.preventDefault(); onUndo() }   // 撤销上一步移走/删除
       else if (k === 'c' || k === 'l') { e.preventDefault(); openCompare() }   // 对比
       else if (k === 't' || e.key === ';') {   // 打标签
         if (selected.size > 0) { e.preventDefault(); setTagDialogIds(new Set(selected)) }
@@ -823,7 +884,7 @@ export default function App() {
             全选 {HK.all} · 删除 {HK.del} · 对比 {HK.compare}<br/>
             全选删除 {HK.delAll} · 标签 {HK.tag}<br/>
             选非最佳 {HK.best} · Finder {HK.finder}<br/>
-            清空 {HK.clear} · 堆栈 {HK.stack}
+            清空 {HK.clear} · 堆栈 {HK.stack} · 撤销 Z
           </div>
         </aside>
 
@@ -904,9 +965,45 @@ export default function App() {
         <button className="danger" disabled={selected.size === 0} onClick={() => onDelete()} title={`删除选中 (${HK.del})`}>
           {deleteMode === 'move' ? `移走 (${selected.size})` : `废纸篓 (${selected.size})`}
         </button>
+        <div className="open-dropdown" style={{display:'flex', gap:4}}>
+          <button onClick={() => onUndo()} title="撤销上一步移走/删除 (Z)">{`↩ 撤销 (Z)`}</button>
+          <button className="open-trigger" onClick={() => { const next = !undoMenuOpen; setUndoMenuOpen(next); if (next) refreshUndoHistory() }} title="最近几步操作,可选择撤销某一步">
+            <span className="caret">▾</span>
+          </button>
+          {undoMenuOpen && (
+            <>
+              <div className="open-menu-backdrop" onClick={() => setUndoMenuOpen(false)} />
+              <div className="undo-menu">
+                <div style={{fontSize:11, color:'var(--muted)', padding:'0 2px 4px'}}>最近操作(最多 5 步)</div>
+                {undoHistory.length === 0 && (
+                  <div style={{fontSize:12, color:'var(--muted)', padding:'2px'}}>暂无可撤销的操作</div>
+                )}
+                {undoHistory.map(b => {
+                  const pending = b.n - (b.restored_n || 0)
+                  const canRestore = (b.restorable_n || 0) > 0 && pending > 0
+                  return (
+                    <div key={b.batch_id} className="undo-menu-item">
+                      <div>
+                        <div>{describeUndoAction(b.action)}</div>
+                        <div style={{color:'var(--muted)', fontSize:10}}>{pending}/{b.n} 张 · {timeAgo(b.at)}</div>
+                      </div>
+                      <button
+                        disabled={!canRestore}
+                        onClick={() => { onUndo(b.batch_id); setUndoMenuOpen(false) }}
+                        style={{fontSize:11, padding:'2px 8px', flexShrink:0}}
+                      >
+                        {pending === 0 ? '已撤销' : canRestore ? '撤销' : '不可撤销'}
+                      </button>
+                    </div>
+                  )
+                })}
+              </div>
+            </>
+          )}
+        </div>
       </div>
 
-      {detail && <DetailView shots={detail.list} startIndex={detail.index} onClose={() => setDetail(null)} onDelete={handleDetailDelete} onRefresh={async () => { await refreshShots(); setTagsTick(t => t + 1) }} />}
+      {detail && <DetailView shots={detail.list} startIndex={detail.index} onClose={() => setDetail(null)} onDelete={handleDetailDelete} onUndo={onUndo} onRefresh={async () => { await refreshShots(); setTagsTick(t => t + 1) }} />}
       {compare && <Compare
         shots={compare}
         onClose={() => { setCompare(null); setSelected(new Set()) }}
@@ -914,6 +1011,7 @@ export default function App() {
         onRemove={handleCompareRemove}
         onBatchDelete={handleCompareBatchDelete}
         onBatchRemove={handleCompareBatchRemove}
+        onUndo={onUndo}
         allTags={allTags}
         onTagsApplied={async () => {
           await refreshShots()
