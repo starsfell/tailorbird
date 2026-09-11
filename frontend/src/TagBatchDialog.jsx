@@ -37,9 +37,9 @@ function TreeRow({ node, depth, byId, expandedIds, toggleExpand, counts, total, 
         }} />
         <span style={{flex:'1 1 auto', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
           {state === 'none' ? '+ ' : ''}{node.name}
-          {node.is_favorite ? <span style={{color:'#ffd866', marginLeft:4}}>★</span> : null}
+          {node.is_favorite ? <span style={{color:'#ffd970', marginLeft:4}}>★</span> : null}
         </span>
-        {state === 'partial' && <span style={{fontSize:10, color:'#ffd866'}}>{c}/{total}</span>}
+        {state === 'partial' && <span style={{fontSize:10, color:'#ffd970'}}>{c}/{total}</span>}
         {state === 'all' && <span style={{fontSize:10, color:'var(--accent)'}}>✓</span>}
       </div>
       {has && expanded && node.children.map(child => (

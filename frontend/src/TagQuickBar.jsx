@@ -2,13 +2,13 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from './api.js'
 
 const PRESET_COLORS = [
-  '#e85a5a', '#f29b3a', '#ffd866', '#4dd0a0', '#5a78ff', '#b88cff', '#ff6fa3',
+  '#f0576a', '#ffab4f', '#ffd970', '#4fe1c4', '#5f82ff', '#a983ff', '#ff7aa8',
 ]
 
 // Bottom quick bar for tagging a set of shots in Compare.
 // `shots` is the picked set (1 or more). Operations apply to all of them.
 // Tri-state for partial tags: chip shows count "N/M" when some-but-not-all have it.
-export function TagQuickBar({ shots, allTags, onApplied, onClose }) {
+export function TagQuickBar({ shots, allTags, countsByTag, onApplied, onClose }) {
   const [text, setText] = useState('')
   const [newColor, setNewColor] = useState(null)
   const [busy, setBusy] = useState(false)
@@ -38,18 +38,46 @@ export function TagQuickBar({ shots, allTags, onApplied, onClose }) {
     }
   }, [list])
 
+  // 「拍摄参数」下的自动标签(ISO/镜头/焦距/光圈,及其具体取值)是扫描时自动打上的,
+  // 不需要在推荐里出现 —— 找到 拍摄参数 这棵子树下的所有 tag id 整体排除掉。
+  const autoTagIds = useMemo(() => {
+    const root = (allTags || []).find(t => t.name === '拍摄参数')
+    if (!root) return new Set()
+    const byParent = new Map()
+    for (const t of allTags) {
+      if (t.parent_id == null) continue
+      if (!byParent.has(t.parent_id)) byParent.set(t.parent_id, [])
+      byParent.get(t.parent_id).push(t.id)
+    }
+    const excluded = new Set([root.id])
+    const stack = [root.id]
+    while (stack.length) {
+      const cur = stack.pop()
+      for (const childId of (byParent.get(cur) || [])) {
+        if (!excluded.has(childId)) { excluded.add(childId); stack.push(childId) }
+      }
+    }
+    return excluded
+  }, [allTags])
+
   const quickPicks = useMemo(() => {
     const used = new Set(attachedById.keys())
     // Only show 'all-applied' tags as removable chips; partial and unused both as quick add.
-    const pool = (allTags || []).filter(t => !used.has(t.id) || (counts.get(t.id) || 0) < total)
+    const pool = (allTags || []).filter(t =>
+      !autoTagIds.has(t.id) && (!used.has(t.id) || (counts.get(t.id) || 0) < total)
+    )
     pool.sort((a, b) => {
       const fa = a.is_favorite ? 1 : 0
       const fb = b.is_favorite ? 1 : 0
       if (fa !== fb) return fb - fa
+      // 按本文件夹(当前网格视图)里的使用频率降序推荐,同频率再按名称排序。
+      const fca = countsByTag?.get(a.id) || 0
+      const fcb = countsByTag?.get(b.id) || 0
+      if (fca !== fcb) return fcb - fca
       return (a.name || '').localeCompare(b.name || '')
     })
     return pool.slice(0, 14)
-  }, [allTags, attachedById, counts, total])
+  }, [allTags, attachedById, counts, total, autoTagIds, countsByTag])
 
   const targetIds = () => list.map(s => s.primary_id)
 

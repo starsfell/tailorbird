@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react'
 import { api } from './api.js'
 import { PanZoom } from './PanZoom.jsx'
 import { TagQuickBar } from './TagQuickBar.jsx'
+import { IconFolder } from './Icons.jsx'
 
 const ZOOM_DEFAULT = 5.0  // 500%
 const COMPARE_SOURCE_PX = 6400
@@ -21,7 +22,7 @@ const KEEP_TAG = '保留'     // 与 App.jsx 一致:批量"保留"标签名
 //
 // S (or the button) disables linkage entirely; in that mode each photo is on
 // its own (still fit-to-cell initially).
-export function Compare({ shots, onClose, onDelete, onRemove, onBatchDelete, onBatchRemove, onUndo, allTags, onTagsApplied }) {
+export function Compare({ shots, onClose, onDelete, onRemove, onBatchDelete, onBatchRemove, onUndo, allTags, countsByTag, onTagsApplied }) {
   const [linked, setLinked] = useState(true)
   const [shared, setShared] = useState({ scale: ZOOM_DEFAULT, offsetX: 0, offsetY: 0 })
   const [bases, setBases] = useState({})
@@ -240,7 +241,7 @@ export function Compare({ shots, onClose, onDelete, onRemove, onBatchDelete, onB
                       {pickedIds.has(s.primary_id) ? '✓' : ''}
                     </span>
                   )}
-                  {!s.isStackResult && <span style={{color:'#ffd866'}}>{stars}</span>}
+                  {!s.isStackResult && <span style={{color:'#ffd970'}}>{stars}</span>}
                   <span>{s.stem}</span>
                   {s.pick && <span className="badge pick-flag">P</span>}
                   {s.focus_weight != null && s.focus_weight >= 1.05 && <span className="badge focus-best">精焦</span>}
@@ -271,9 +272,9 @@ export function Compare({ shots, onClose, onDelete, onRemove, onBatchDelete, onB
                         : api.revealInFinder(s.primary_id)
                       p.catch(err => alert(err.message))
                     }}
-                    style={{padding:'2px 8px'}}
+                    style={{padding:'2px 8px', display:'inline-flex', alignItems:'center'}}
                     title="在 Finder 中显示 (R / U)"
-                  >📁</button>
+                  ><IconFolder size={13} /></button>
                   {!s.isStackResult && (
                     <>
                       <button onClick={() => onRemove?.(s)} style={{padding:'2px 8px'}} title="从对比中移出(不删文件)">移出对比</button>
@@ -296,6 +297,7 @@ export function Compare({ shots, onClose, onDelete, onRemove, onBatchDelete, onB
         <TagQuickBar
           shots={pickedShots}
           allTags={allTags || []}
+          countsByTag={countsByTag}
           onApplied={onTagsApplied}
           onClose={clearPick}
         />

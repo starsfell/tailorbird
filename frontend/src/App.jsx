@@ -423,6 +423,17 @@ export default function App() {
     } catch (e) { alert('标签操作失败: ' + e.message) }
   }
 
+  // 侧边栏标签树的 + 图标:把某个具体标签一键加到当前网格已选中的照片上。
+  const onQuickAddTagToSelected = async (tagId) => {
+    const ids = Array.from(selected)
+    if (ids.length === 0) return
+    try {
+      await api.batchPhotoTags(ids, { add_tag_ids: [tagId] })
+      await refreshShots()
+      setTagsTick(t => t + 1)
+    } catch (e) { alert('标签操作失败: ' + e.message) }
+  }
+
   // 把所有带「精修」标签的照片移动到各自源目录下的「精修」子文件夹(没有就自动建)。
   const onMoveRefineToSubfolder = async () => {
     const tag = allTags.find(t => t.name === REFINE_TAG)
@@ -463,7 +474,7 @@ export default function App() {
 
   const openCompare = () => {
     const list = shots.filter(s => selected.has(s.primary_id))
-    if (list.length < 2) { alert('请至少选 2 张'); return }
+    if (list.length < 1) { alert('请先选照片'); return }
     const final = list.length > 9
       ? [...list].sort((a, b) => a.stem.localeCompare(b.stem)).slice(0, 9)
       : list
@@ -591,7 +602,7 @@ export default function App() {
   return (
     <div className="app">
       <div className="topbar">
-        <button className="home-back" onClick={() => setView('home')} title="返回首页">← 首页</button>
+        <button className="home-back" onClick={() => { setView('home'); refreshFolders() }} title="返回首页">← 首页</button>
         <input
           type="text" value={folder} onChange={e => setFolder(e.target.value)}
           placeholder="照片目录绝对路径"
@@ -929,6 +940,8 @@ export default function App() {
             statusFilter={statusFilter}
             setStatusFilter={setStatusFilter}
             statusCounts={statusCounts}
+            selectedCount={selected.size}
+            onQuickAddToSelection={onQuickAddTagToSelected}
           />
         </div>
         </>)}
@@ -942,7 +955,7 @@ export default function App() {
           title="切换快捷键提示:左手键 / 左撇子右手键(两套始终都能用,只切换按钮上显示哪一套)">
           {handMode === 'right' ? '⌨ 右手键' : '⌨ 左手键'}
         </button>
-        <button onClick={openCompare} disabled={selected.size < 2}>{`对比 (${HK.compare})`}</button>
+        <button onClick={openCompare} disabled={selected.size < 1}>{`对比 (${HK.compare})`}</button>
         <button onClick={() => setStackDialogOpen(true)} disabled={selected.size < 2}>{`堆栈 (${HK.stack})`}</button>
         <button onClick={() => setTagDialogIds(new Set(selected))} disabled={selected.size === 0}>{`+ 标签 (${HK.tag})`}</button>
         <button
@@ -1013,6 +1026,7 @@ export default function App() {
         onBatchRemove={handleCompareBatchRemove}
         onUndo={onUndo}
         allTags={allTags}
+        countsByTag={countsByTag}
         onTagsApplied={async () => {
           await refreshShots()
           setTagsTick(t => t + 1)

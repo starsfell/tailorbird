@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from './api.js'
 import { PanZoom } from './PanZoom.jsx'
 import { buildTagTree, tagPath } from './tagTree.js'
+import { IconFolder } from './Icons.jsx'
 
 function TagBar({ primaryId, tags, setTags, allTags, onTagsRefresh }) {
   const [text, setText] = useState('')
@@ -145,7 +146,7 @@ function TagBar({ primaryId, tags, setTags, allTags, onTagsRefresh }) {
 
 function Stars({ n }) {
   if (n == null || n < 0) return <span style={{color:'var(--muted)'}}>无鸟</span>
-  return <span style={{color:'#ffd866'}}>{'★'.repeat(n)}{'☆'.repeat(3 - n)}</span>
+  return <span style={{color:'#ffd970'}}>{'★'.repeat(n)}{'☆'.repeat(3 - n)}</span>
 }
 
 // Overlays for existing (AI) bbox/eye/AF point.
@@ -319,7 +320,10 @@ export function DetailView({ shots, startIndex = 0, onClose, onDelete, onUndo, o
             </div>
             <div style={{display:'flex', gap:8}}>
               <button onClick={() => api.revealInFinder(shot.primary_id).catch(e => alert(e.message))}
-                title="在 Finder 中显示这张照片 (R / U)">📁 Finder</button>
+                title="在 Finder 中显示这张照片 (R / U)"
+                style={{display:'inline-flex', alignItems:'center', gap:5}}>
+                <IconFolder size={13} /> Finder
+              </button>
               <button onClick={startAnnotate} title="手动标注鸟框和眼位">手动标注</button>
               <button onClick={() => setIdx(i => Math.max(0, i - 1))} disabled={idx === 0} title="上一张 (← / K / L)">← 上一张</button>
               <button onClick={() => setIdx(i => Math.min(shots.length - 1, i + 1))} disabled={idx >= shots.length - 1} title="下一张 (→ / ;)">下一张 →</button>
@@ -331,7 +335,7 @@ export function DetailView({ shots, startIndex = 0, onClose, onDelete, onUndo, o
         )}
         {annotMode && (
           <div style={{display:'flex', gap:8, alignItems:'center'}}>
-            <span style={{fontSize:12, color:'#ffd866'}}>
+            <span style={{fontSize:12, color:'#ffd970'}}>
               {annotMode === 'rect' && '1. 拖动鼠标框选鸟主体'}
               {annotMode === 'point' && (manual.eye ? '完成 — 可重新点击眼睛或保存' : '2. 点击鸟眼位置(可跳过)')}
             </span>

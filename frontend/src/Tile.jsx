@@ -1,16 +1,20 @@
 import React from 'react'
 import { api } from './api.js'
 
+const REFINE_TAG = '精修'
+const KEEP_TAG = '保留'
+
 function Stars({ n }) {
   if (n == null || n < 0) return <span className="badge">无鸟</span>
   return <span className="stars">{'★'.repeat(n)}{'☆'.repeat(3 - n)}</span>
 }
 
-export function Tile({ shot, selected, onToggle, onOpen, showTags = false }) {
+export function Tile({ shot, selected, onToggle, onOpen, showTags = false, highlighted = false }) {
   const cls = ['tile']
   if (selected) cls.push('selected')
   if (shot.is_cluster_best) cls.push('best')
   if (shot.pick) cls.push('pick')
+  if (highlighted) cls.push('search-hit')
   const sharp = shot.subject_sharpness
   const sharpLabel = sharp == null ? '—' : sharp.toFixed(2)
   const eye = shot.eye_sharpness
@@ -18,8 +22,11 @@ export function Tile({ shot, selected, onToggle, onOpen, showTags = false }) {
   const aes = shot.aesthetic_score
   const aesLabel = aes == null ? null : aes.toFixed(2)
   const conf = shot.bird_confidence
+  const isRefined = (shot.tags || []).some(t => t.name === REFINE_TAG)
+  const isKept = (shot.tags || []).some(t => t.name === KEEP_TAG)
   return (
     <div
+      id={`tile-${shot.primary_id}`}
       className={cls.join(' ')}
       onClick={(e) => onToggle(shot.primary_id, e)}
       onDoubleClick={(e) => { e.stopPropagation(); onOpen && onOpen(shot) }}
@@ -45,8 +52,14 @@ export function Tile({ shot, selected, onToggle, onOpen, showTags = false }) {
           {aesLabel && <span className="badge aes" title="TOPIQ 美学">{aesLabel}</span>}
         </span>
       </div>
-      {conf != null && conf > 0 && (
-        <span className="bird-conf" title="鸟检测置信度">{Math.round(conf * 100)}%</span>
+      {(isRefined || isKept || (conf != null && conf > 0)) && (
+        <div className="tile-tr">
+          {isRefined && <span className="badge tag-refine" title="已标「精修」">精修</span>}
+          {isKept && <span className="badge tag-keep" title="已标「保留」">保留</span>}
+          {conf != null && conf > 0 && (
+            <span className="bird-conf" title="鸟检测置信度">{Math.round(conf * 100)}%</span>
+          )}
+        </div>
       )}
       {showTags && shot.tags && shot.tags.length > 0 && (
         <div className="tile-tags">

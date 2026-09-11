@@ -37,7 +37,7 @@ function TagTreeRow({
         <span className="swatch" style={node.color ? { background: node.color } : undefined} />
         <span style={{flex:'1 1 auto', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
           {node.name}
-          {node.is_favorite ? <span style={{color:'#ffd866', marginLeft:4}}>★</span> : null}
+          {node.is_favorite ? <span style={{color:'#ffd970', marginLeft:4}}>★</span> : null}
         </span>
         <span className="count">{node.usage_count}</span>
       </div>
@@ -255,7 +255,7 @@ export function TriageView({
         >
           {shots.length === 0 ? (
             <div style={{padding:40, color:'var(--muted)', textAlign:'center'}}>
-              {loading ? '加载中…' : untaggedOnly ? '当前范围内全部打过标了 🎉' : '没有照片 — 先在主页扫描一个目录'}
+              {loading ? '加载中…' : untaggedOnly ? '当前范围内全部打过标了' : '没有照片 — 先在主页扫描一个目录'}
             </div>
           ) : (
             <div className="grid">

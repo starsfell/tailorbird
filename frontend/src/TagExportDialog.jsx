@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { api } from './api.js'
+import { IconFolder, IconCheck, IconAlert } from './Icons.jsx'
 
 const LS_KEY_BASE = 'tagExportBase'
 const LS_KEY_MODE = 'tagExportMode'
@@ -64,7 +65,9 @@ export function TagExportDialog({ tag, onClose, onDone }) {
           <div style={{display:'grid', gridTemplateColumns:'auto 1fr auto', gap:8, alignItems:'center', marginBottom:8}}>
             <span style={{color:'var(--muted)', fontSize:12}}>基目录</span>
             <input type="text" value={base} onChange={(e) => setBase(e.target.value)} placeholder="/Volumes/External/2026" style={{width:'100%'}} />
-            <button onClick={pickBase} disabled={busy}>📁 选择…</button>
+            <button onClick={pickBase} disabled={busy} style={{display:'inline-flex', alignItems:'center', gap:5}}>
+              <IconFolder size={13} /> 选择…
+            </button>
 
             <span style={{color:'var(--muted)', fontSize:12}}>子文件夹</span>
             <input type="text" value={subfolder} onChange={(e) => setSubfolder(e.target.value)} placeholder={tag?.name || ''} style={{width:'100%'}} />
@@ -80,22 +83,25 @@ export function TagExportDialog({ tag, onClose, onDone }) {
           </div>
 
           {base.trim() && (
-            <div style={{fontSize:11, color:'var(--muted)', marginBottom:14, padding:8, background:'#0e0f12', borderRadius:6}}>
+            <div style={{fontSize:11, color:'var(--muted)', marginBottom:14, padding:8, background:'var(--bg)', borderRadius:6}}>
               目标: <code>{base.trim()}/{(subfolder.trim() || tag?.name)}/</code>
             </div>
           )}
 
           {result && (
-            <div style={{fontSize:12, padding:8, background:'#0e2a1c', borderRadius:6, marginBottom:10}}>
-              ✅ 完成: {result.exported?.length || 0} {mode === 'copy' ? '复制' : '移动'}
-              {result.skipped?.length ? ` · 跳过 ${result.skipped.length} (已在目标里)` : ''}
-              {result.failed?.length ? ` · ${result.failed.length} 失败` : ''}
-              <div style={{color:'var(--muted)', marginTop:4, wordBreak:'break-all'}}>{result.destination}</div>
+            <div style={{fontSize:12, padding:8, background:'color-mix(in srgb, var(--success) 16%, var(--bg-card))', borderRadius:6, marginBottom:10, display:'flex', gap:6, alignItems:'flex-start'}}>
+              <IconCheck size={14} style={{color:'var(--success)', marginTop:2, flex:'none'}} />
+              <div>
+                完成: {result.exported?.length || 0} {mode === 'copy' ? '复制' : '移动'}
+                {result.skipped?.length ? ` · 跳过 ${result.skipped.length} (已在目标里)` : ''}
+                {result.failed?.length ? ` · ${result.failed.length} 失败` : ''}
+                <div style={{color:'var(--muted)', marginTop:4, wordBreak:'break-all'}}>{result.destination}</div>
+              </div>
             </div>
           )}
           {error && (
-            <div style={{fontSize:12, padding:8, background:'#2a0e0e', borderRadius:6, marginBottom:10, color:'var(--danger)'}}>
-              ❌ {error}
+            <div style={{fontSize:12, padding:8, background:'color-mix(in srgb, var(--danger) 16%, var(--bg-card))', borderRadius:6, marginBottom:10, color:'var(--danger)', display:'flex', gap:6, alignItems:'center'}}>
+              <IconAlert size={14} style={{flex:'none'}} /> {error}
             </div>
           )}
 

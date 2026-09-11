@@ -392,6 +392,10 @@ def list_shots(
         LIMIT ? OFFSET ?
     """
     with tx() as conn:
+        if folder:
+            folder_row = conn.execute("SELECT id FROM folders WHERE path=?", (folder,)).fetchone()
+            if folder_row:
+                _reconcile_missing_files(conn, folder_row["id"])
         rows = conn.execute(sql, [*params, limit, offset]).fetchall()
         # Fetch tags for every photo in this page's shots in one shot.
         all_member_ids: list[int] = []
@@ -1154,9 +1158,32 @@ def delete_folder(folder_id: int) -> dict:
     }
 
 
+def _reconcile_missing_files(conn, folder_id: int | None = None) -> int:
+    """Soft-delete photo rows whose file no longer exists on disk (e.g. removed
+    outside the app via Finder), so counts/listings stay accurate without a
+    full rescan. Returns how many were marked gone."""
+    import time
+
+    where = "deleted_at IS NULL"
+    params: list = []
+    if folder_id is not None:
+        where += " AND folder_id=?"
+        params.append(folder_id)
+    rows = conn.execute(f"SELECT id, path FROM photos WHERE {where}", params).fetchall()
+    missing_ids = [r["id"] for r in rows if not Path(r["path"]).exists()]
+    if missing_ids:
+        now = time.time()
+        ph = ",".join(["?"] * len(missing_ids))
+        conn.execute(f"UPDATE photos SET deleted_at=? WHERE id IN ({ph})", [now, *missing_ids])
+    return len(missing_ids)
+
+
 @app.get("/api/folders")
 def list_folders() -> dict:
     with tx() as conn:
+        folder_ids = [r["id"] for r in conn.execute("SELECT id FROM folders").fetchall()]
+        for fid in folder_ids:
+            _reconcile_missing_files(conn, fid)
         rows = conn.execute(
             """
             SELECT folders.id, folders.path, folders.last_scanned_at,

@@ -3,9 +3,10 @@ import { api } from './api.js'
 import { buildTagTree, descendantIds, tagPath } from './tagTree.js'
 import { TagPickerDialog } from './TagPickerDialog.jsx'
 import { TagExportDialog } from './TagExportDialog.jsx'
+import { IconEdit, IconPlus, IconFolder, IconBox, IconTrash } from './Icons.jsx'
 
 const PRESET_COLORS = [
-  null, '#e85a5a', '#f29b3a', '#ffd866', '#4dd0a0', '#5a78ff', '#b88cff', '#ff6fa3',
+  null, '#f0576a', '#ffab4f', '#ffd970', '#4fe1c4', '#5f82ff', '#a983ff', '#ff7aa8',
 ]
 
 // 这两个标签从普通标签树里单独拉出来,固定置顶,彩色加粗显示。
@@ -99,13 +100,13 @@ function TagContextMenu({ tag, anchor, allTags, onClose, onChanged, onDeleted, o
         </div>
       ) : (
         <>
-          <div className="item" onClick={() => setRenaming(true)}>✎ 改名</div>
-          <div className="item" onClick={() => setCreating(true)}>➕ 新建子标签</div>
+          <div className="item" onClick={() => setRenaming(true)}><IconEdit /> 改名</div>
+          <div className="item" onClick={() => setCreating(true)}><IconPlus /> 新建子标签</div>
           <div className="item" onClick={() => onMove?.(tag)}>↪ 移到分组…</div>
           <div className="item" onClick={toggleFav}>{tag.is_favorite ? '☆ 取消常用' : '★ 设为常用'}</div>
           <div className="sep" />
-          <div className="item" onClick={() => onQuickMove?.(tag)}>📂 移到「{tag.name}」子文件夹</div>
-          <div className="item" onClick={() => onExport?.(tag)} style={{fontSize:11, color:'var(--muted)'}}>📦 导出到外置盘…(自定义)</div>
+          <div className="item" onClick={() => onQuickMove?.(tag)}><IconFolder size={14} /> 移到「{tag.name}」子文件夹</div>
+          <div className="item" onClick={() => onExport?.(tag)} style={{fontSize:11, color:'var(--muted)'}}><IconBox /> 导出到外置盘…(自定义)</div>
           <div className="sep" />
           <div style={{fontSize:11, color:'var(--muted)', padding:'4px 10px'}}>颜色</div>
           <div className="swatches">
@@ -117,8 +118,8 @@ function TagContextMenu({ tag, anchor, allTags, onClose, onChanged, onDeleted, o
             ))}
           </div>
           <div className="sep" />
-          <div className="item danger" onClick={() => doDelete('lift')}>🗑 删除(子升级父级)</div>
-          <div className="item danger" onClick={() => doDelete('cascade')}>🗑 删除全部(含子)</div>
+          <div className="item danger" onClick={() => doDelete('lift')}><IconTrash /> 删除(子升级父级)</div>
+          <div className="item danger" onClick={() => doDelete('cascade')}><IconTrash /> 删除全部(含子)</div>
         </>
       )}
     </div>
@@ -130,6 +131,7 @@ function TagTreeRow({
   expandedIds, toggleExpand,
   selectedIds, onToggle,
   countsByTag, searchTerm, onContext,
+  selectedCount, onQuickAddToSelection,
 }) {
   const hasChildren = node.children.length > 0
   const expanded = expandedIds.has(node.id) || !!searchTerm
@@ -156,7 +158,7 @@ function TagTreeRow({
           <span style={{overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}
             title={tagPath(byId, node.id).join(' / ')}>
             {node.name}
-            {node.is_favorite ? <span style={{color:'#ffd866', marginLeft:4}}>★</span> : null}
+            {node.is_favorite ? <span style={{color:'#ffd970', marginLeft:4}}>★</span> : null}
           </span>
         </span>
         <span className="count">
@@ -164,6 +166,13 @@ function TagTreeRow({
             ? `${directCount}/${node.usage_count}`
             : node.usage_count}
         </span>
+        {!hasChildren && onQuickAddToSelection && (
+          <button className="quick-add"
+            disabled={!selectedCount}
+            title={selectedCount ? `把「${node.name}」加到已选中的 ${selectedCount} 张照片` : '先在网格中选中照片'}
+            onClick={(e) => { e.stopPropagation(); onQuickAddToSelection(node.id) }}
+          >+</button>
+        )}
         <button className="more" title="管理 (右键)"
           onClick={(e) => { e.stopPropagation(); onContext(node, { x: e.clientX, y: e.clientY }) }}>⋯</button>
       </div>
@@ -172,6 +181,7 @@ function TagTreeRow({
           expandedIds={expandedIds} toggleExpand={toggleExpand}
           selectedIds={selectedIds} onToggle={onToggle}
           countsByTag={countsByTag} searchTerm={searchTerm} onContext={onContext}
+          selectedCount={selectedCount} onQuickAddToSelection={onQuickAddToSelection}
         />
       ))}
     </>
@@ -218,6 +228,18 @@ const STATUS_GROUPS = [
 ]
 
 function StatusFilterSection({ statusFilter, setStatusFilter, statusCounts }) {
+  const [collapsed, setCollapsed] = useState(() => {
+    try {
+      const raw = localStorage.getItem('statusGroupCollapsed')
+      return new Set(raw ? JSON.parse(raw) : [])
+    } catch { return new Set() }
+  })
+  const toggleGroup = (title) => setCollapsed(prev => {
+    const next = new Set(prev)
+    if (next.has(title)) next.delete(title); else next.add(title)
+    try { localStorage.setItem('statusGroupCollapsed', JSON.stringify([...next])) } catch {}
+    return next
+  })
   const toggle = (id) => setStatusFilter(prev => {
     const n = new Set(prev)
     if (n.has(id)) n.delete(id); else n.add(id)
@@ -225,10 +247,17 @@ function StatusFilterSection({ statusFilter, setStatusFilter, statusCounts }) {
   })
   return (
     <>
-      {STATUS_GROUPS.map(g => (
+      {STATUS_GROUPS.map(g => {
+        const isCollapsed = collapsed.has(g.title)
+        return (
         <React.Fragment key={g.title}>
-          <div className="section-title">{g.title}</div>
-          {g.items.map(item => {
+          <div className="section-title clickable" onClick={() => toggleGroup(g.title)}>
+            <span style={{ display:'inline-block', width:10, color:'var(--muted)' }}>
+              {isCollapsed ? '▸' : '▾'}
+            </span>
+            {g.title}
+          </div>
+          {!isCollapsed && g.items.map(item => {
             const active = statusFilter.has(item.id)
             const count = statusCounts?.[item.id]
             return (
@@ -249,7 +278,8 @@ function StatusFilterSection({ statusFilter, setStatusFilter, statusCounts }) {
             )
           })}
         </React.Fragment>
-      ))}
+        )
+      })}
     </>
   )
 }
@@ -264,6 +294,7 @@ export function TagFilterPanel({
   viewCount,
   onSelectAllInView,
   statusFilter, setStatusFilter, statusCounts,
+  selectedCount, onQuickAddToSelection,
 }) {
   const [q, setQ] = useState('')
   const [ctx, setCtx] = useState(null)
@@ -284,25 +315,32 @@ export function TagFilterPanel({
     })
   }
 
-  // One-time seed: auto-expand 拍摄参数 + its 4 direct children (ISO, 镜头, 焦距, 光圈)
-  // so users see all auto-generated shooting-param tags at first glance.
+  // 「拍摄参数」(ISO/镜头/焦距/光圈自动标签)默认折叠,不再自动展开 —
+  // 用户自己点开后,展开状态会照常存进上面的 expandedIds/localStorage。
+  //
+  // 一次性迁移:老版本曾把 拍摄参数 + 其 4 个直接子分类 强制写进
+  // localStorage 的展开集合里,光删掉那段自动展开代码并不会清掉已经
+  // 写入的旧记录,所以这里主动把它们从展开集合里摘出去一次。
   useEffect(() => {
     if (allTags.length === 0) return
     try {
-      if (localStorage.getItem('tagTreeAutoSeeded') === '1') return
+      if (localStorage.getItem('tagTreeAutoCollapseMigrated') === '1') return
     } catch { return }
     const root = allTags.find(t => t.name === '拍摄参数')
-    if (!root) return
-    const toExpand = new Set([root.id])
-    for (const t of allTags) if (t.parent_id === root.id) toExpand.add(t.id)
-    setExpandedIds(prev => {
-      const next = new Set([...prev, ...toExpand])
-      try {
-        localStorage.setItem('tagTreeExpanded', JSON.stringify([...next]))
-        localStorage.setItem('tagTreeAutoSeeded', '1')
-      } catch {}
-      return next
-    })
+    if (root) {
+      const toCollapse = new Set([root.id])
+      for (const t of allTags) if (t.parent_id === root.id) toCollapse.add(t.id)
+      setExpandedIds(prev => {
+        const next = new Set(prev)
+        let changed = false
+        for (const id of toCollapse) if (next.delete(id)) changed = true
+        if (changed) {
+          try { localStorage.setItem('tagTreeExpanded', JSON.stringify([...next])) } catch {}
+        }
+        return changed ? next : prev
+      })
+    }
+    try { localStorage.setItem('tagTreeAutoCollapseMigrated', '1') } catch {}
   }, [allTags])
 
   const { roots, byId } = useMemo(() => buildTagTree(allTags), [allTags])
@@ -343,6 +381,7 @@ export function TagFilterPanel({
       selectedIds={tagFilter} onToggle={toggle}
       countsByTag={countsByTag} searchTerm={q.trim()}
       onContext={(tag, anchor) => setCtx({ tag, anchor })}
+      selectedCount={selectedCount} onQuickAddToSelection={onQuickAddToSelection}
     />
   ))
 
@@ -406,6 +445,13 @@ export function TagFilterPanel({
                       ? `${directCount}/${tag.usage_count}`
                       : tag.usage_count}
                   </span>
+                  {onQuickAddToSelection && (
+                    <button className="quick-add"
+                      disabled={!selectedCount}
+                      title={selectedCount ? `把「${tag.name}」加到已选中的 ${selectedCount} 张照片` : '先在网格中选中照片'}
+                      onClick={(e) => { e.stopPropagation(); onQuickAddToSelection(tag.id) }}
+                    >+</button>
+                  )}
                 </div>
               )
             })}

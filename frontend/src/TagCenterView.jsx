@@ -4,9 +4,10 @@ import { Grid } from './Grid.jsx'
 import { buildTagTree, descendantIds, tagPath } from './tagTree.js'
 import { TagPickerDialog } from './TagPickerDialog.jsx'
 import { TagExportDialog } from './TagExportDialog.jsx'
+import { IconEdit, IconPlus, IconFolder, IconBox, IconTrash } from './Icons.jsx'
 
 const PRESET_COLORS = [
-  null, '#e85a5a', '#f29b3a', '#ffd866', '#4dd0a0', '#5a78ff', '#b88cff', '#ff6fa3',
+  null, '#f0576a', '#ffab4f', '#ffd970', '#4fe1c4', '#5f82ff', '#a983ff', '#ff7aa8',
 ]
 
 function TagContextMenu({ tag, anchor, onClose, onChanged, onDeleted, onMove, onExport, onQuickMove }) {
@@ -85,13 +86,13 @@ function TagContextMenu({ tag, anchor, onClose, onChanged, onDeleted, onMove, on
         </div>
       ) : (
         <>
-          <div className="item" onClick={() => setRenaming(true)}>✎ 改名</div>
-          <div className="item" onClick={() => setCreating(true)}>➕ 新建子标签</div>
+          <div className="item" onClick={() => setRenaming(true)}><IconEdit /> 改名</div>
+          <div className="item" onClick={() => setCreating(true)}><IconPlus /> 新建子标签</div>
           <div className="item" onClick={() => onMove?.(tag)}>↪ 移到分组…</div>
           <div className="item" onClick={toggleFav}>{tag.is_favorite ? '☆ 取消常用' : '★ 设为常用'}</div>
           <div className="sep" />
-          <div className="item" onClick={() => onQuickMove?.(tag)}>📂 移到「{tag.name}」子文件夹</div>
-          <div className="item" onClick={() => onExport?.(tag)} style={{fontSize:11, color:'var(--muted)'}}>📦 导出到外置盘…(自定义)</div>
+          <div className="item" onClick={() => onQuickMove?.(tag)}><IconFolder size={14} /> 移到「{tag.name}」子文件夹</div>
+          <div className="item" onClick={() => onExport?.(tag)} style={{fontSize:11, color:'var(--muted)'}}><IconBox /> 导出到外置盘…(自定义)</div>
           <div className="sep" />
           <div style={{fontSize:11, color:'var(--muted)', padding:'4px 10px'}}>颜色</div>
           <div className="swatches">
@@ -103,8 +104,8 @@ function TagContextMenu({ tag, anchor, onClose, onChanged, onDeleted, onMove, on
             ))}
           </div>
           <div className="sep" />
-          <div className="item danger" onClick={() => doDelete('lift')}>🗑 删除(子升级父级)</div>
-          <div className="item danger" onClick={() => doDelete('cascade')}>🗑 删除全部(含子)</div>
+          <div className="item danger" onClick={() => doDelete('lift')}><IconTrash /> 删除(子升级父级)</div>
+          <div className="item danger" onClick={() => doDelete('cascade')}><IconTrash /> 删除全部(含子)</div>
         </>
       )}
     </div>
@@ -130,7 +131,7 @@ function TreeRow({ node, depth, byId, expandedIds, toggleExpand, selectedIds, on
           <span style={{overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}
             title={tagPath(byId, node.id).join(' / ')}>
             {node.name}
-            {node.is_favorite ? <span style={{color:'#ffd866', marginLeft:4}}>★</span> : null}
+            {node.is_favorite ? <span style={{color:'#ffd970', marginLeft:4}}>★</span> : null}
           </span>
         </span>
         <span className="count">{node.usage_count}</span>
@@ -168,10 +169,18 @@ export function TagCenterView({
   const [ctx, setCtx] = useState(null)
   const [moveTarget, setMoveTarget] = useState(null)
   const [exportTarget, setExportTarget] = useState(null)
-  const [expandedIds, setExpandedIds] = useState(new Set())
+  const [expandedIds, setExpandedIds] = useState(() => {
+    try {
+      const raw = localStorage.getItem('tagTreeExpanded')
+      return new Set(raw ? JSON.parse(raw) : [])
+    } catch { return new Set() }
+  })
   const [shotsTick, setShotsTick] = useState(0)
   const toggleExpand = (id) => setExpandedIds(prev => {
-    const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n
+    const n = new Set(prev)
+    if (n.has(id)) n.delete(id); else n.add(id)
+    try { localStorage.setItem('tagTreeExpanded', JSON.stringify([...n])) } catch {}
+    return n
   })
 
   useEffect(() => {

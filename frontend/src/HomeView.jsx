@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import { IconFolder, IconImage } from './Icons.jsx'
 
 function fmtTime(ts) {
   if (!ts) return '未扫描'
@@ -11,7 +12,7 @@ function fmtTime(ts) {
 }
 
 export function HomeView({ folders, busy, onPickFolder, onPickFiles, onOpenTask, onDeleteFolder }) {
-  const [runAi, setRunAi] = useState(true)
+  const [runAi, setRunAi] = useState(false)
   return (
     <div className="home">
       <div className="home-hero">
@@ -19,12 +20,12 @@ export function HomeView({ folders, busy, onPickFolder, onPickFiles, onOpenTask,
         <p className="home-tagline">鸟类摄影挑片助手 · 选择照片，开始一次挑片任务</p>
         <div className="home-actions">
           <button className="home-card" onClick={() => onPickFolder(runAi)} disabled={busy}>
-            <div className="home-card-icon">📁</div>
+            <div className="home-card-icon"><IconFolder size={32} /></div>
             <div className="home-card-title">选择文件夹</div>
             <div className="home-card-sub">扫描整个文件夹里的照片</div>
           </button>
           <button className="home-card" onClick={() => onPickFiles(runAi)} disabled={busy}>
-            <div className="home-card-icon">🖼️</div>
+            <div className="home-card-icon"><IconImage size={32} /></div>
             <div className="home-card-title">选择文件</div>
             <div className="home-card-sub">只挑选其中一部分照片</div>
           </button>
