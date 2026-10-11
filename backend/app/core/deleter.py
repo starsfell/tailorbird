@@ -49,21 +49,18 @@ def delete_photos(photo_ids: list[int], pair_with_sidecar: bool = True) -> dict:
 
     with tx() as conn:
         rows = conn.execute(
-            f"SELECT id, path, stem, ext, folder_id FROM photos WHERE id IN ({','.join(['?'] * len(photo_ids))}) AND deleted_at IS NULL",
+            f"SELECT id, path, stem, ext, folder_id, shot_key FROM photos WHERE id IN ({','.join(['?'] * len(photo_ids))}) AND deleted_at IS NULL",
             photo_ids,
         ).fetchall()
         target_records = [dict(r) for r in rows]
 
         if pair_with_sidecar and target_records:
-            keys = {(r["folder_id"], r["stem"]) for r in target_records}
+            keys = list({r["shot_key"] for r in target_records})
             existing_paths = {r["path"] for r in target_records}
-            placeholders = " OR ".join(["(folder_id=? AND stem=?)"] * len(keys))
-            params: list = []
-            for fid, stem in keys:
-                params.extend([fid, stem])
+            placeholders = ",".join(["?"] * len(keys))
             sidecars = conn.execute(
-                f"SELECT id, path, stem, ext, folder_id FROM photos WHERE ({placeholders}) AND deleted_at IS NULL",
-                params,
+                f"SELECT id, path, stem, ext, folder_id, shot_key FROM photos WHERE shot_key IN ({placeholders}) AND deleted_at IS NULL",
+                keys,
             ).fetchall()
             for s in sidecars:
                 if s["path"] not in existing_paths:

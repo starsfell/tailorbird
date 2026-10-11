@@ -2,26 +2,30 @@ import React, { useMemo, useRef, useState } from 'react'
 import { Tile } from './Tile.jsx'
 
 const SORT_MODES = [
-  { key: 'stem', label: '编号' },
+  { key: 'time', label: '时间' },
   { key: 'score_desc', label: '分数 ↓' },
   { key: 'score_asc', label: '分数 ↑' },
 ]
 
 function sortShots(arr, sortMode) {
-  const byStem = (a, b) => (a.stem || '').localeCompare(b.stem || '', undefined, { numeric: true })
+  // Capture time first, filename second: one folder can hold several camera
+  // sub-folders whose numbering rolled over, so names alone repeat/interleave.
+  const byTime = (a, b) =>
+    (a.shot_at ?? Infinity) - (b.shot_at ?? Infinity) ||
+    (a.stem || '').localeCompare(b.stem || '', undefined, { numeric: true })
   if (sortMode === 'score_desc') {
-    arr.sort((a, b) => (b.rating ?? -1) - (a.rating ?? -1) || byStem(a, b))
+    arr.sort((a, b) => (b.rating ?? -1) - (a.rating ?? -1) || byTime(a, b))
   } else if (sortMode === 'score_asc') {
-    arr.sort((a, b) => (a.rating ?? -1) - (b.rating ?? -1) || byStem(a, b))
+    arr.sort((a, b) => (a.rating ?? -1) - (b.rating ?? -1) || byTime(a, b))
   } else {
-    arr.sort(byStem)
+    arr.sort(byTime)
   }
   return arr
 }
 
 export function Grid({ shots, selected, setSelected, onOpen }) {
-  // Order within each cluster: by filename (stem, default), or by score asc/desc.
-  const [sortMode, setSortMode] = useState('stem')
+  // Order within each cluster: by capture time then filename (default), or by score asc/desc.
+  const [sortMode, setSortMode] = useState('time')
 
   // Search-by-stem locate: typing jumps to the first match and highlights it;
   // Enter (Shift+Enter for reverse) cycles through the rest.

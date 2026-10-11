@@ -286,11 +286,11 @@ def _apply_ratings(folder_id: int, skill: str = DEFAULT_SKILL) -> None:
 
 
 def _cluster_photos(folder_id: int) -> None:
-    """Cluster at SHOT level (group by stem first), then propagate cluster_id back to all members."""
+    """Cluster at SHOT level (group by shot_key first), then propagate cluster_id back to all members."""
     with tx() as conn:
         rows = conn.execute(
             """
-            SELECT id, stem, ext, shot_at, phash, subject_sharpness
+            SELECT id, stem, shot_key, ext, shot_at, phash, subject_sharpness
             FROM photos
             WHERE folder_id=? AND deleted_at IS NULL AND phash IS NOT NULL
             ORDER BY shot_at IS NULL, shot_at, id
@@ -298,14 +298,16 @@ def _cluster_photos(folder_id: int) -> None:
             (folder_id,),
         ).fetchall()
 
-        # Group photo rows into shots by stem; one shot may contain ARW+HIF
+        # Group photo rows into shots by shot_key; one shot may contain ARW+HIF.
+        # Not by stem: sub-folders (102MSDCF/104MSDCF…) can reuse the same name.
         shots: dict[str, dict] = {}
         for r in rows:
             d = dict(r)
-            stem = d["stem"]
-            if stem not in shots:
-                shots[stem] = {
-                    "stem": stem,
+            key = d["shot_key"]
+            if key not in shots:
+                shots[key] = {
+                    "key": key,
+                    "stem": d["stem"],
                     "shot_at": d["shot_at"],
                     "phash": d["phash"],
                     "sharpness": d["subject_sharpness"] or 0.0,
@@ -313,7 +315,7 @@ def _cluster_photos(folder_id: int) -> None:
                     "best_ext": d["ext"],
                 }
             else:
-                s = shots[stem]
+                s = shots[key]
                 s["member_ids"].append(d["id"])
                 if (d["subject_sharpness"] or 0) > s["sharpness"]:
                     s["sharpness"] = d["subject_sharpness"] or 0
@@ -362,7 +364,7 @@ def _cluster_photos(folder_id: int) -> None:
         for idx, group in enumerate(clusters):
             best_shot = max(group, key=lambda s: s["sharpness"])
             for s in group:
-                is_best = 1 if s["stem"] == best_shot["stem"] else 0
+                is_best = 1 if s is best_shot else 0
                 for pid in s["member_ids"]:
                     conn.execute(
                         "UPDATE photos SET cluster_id=?, is_cluster_best=? WHERE id=?",
@@ -490,7 +492,7 @@ def scan_folder(
     same dataset rather than starting over. Clustering / similarity / AI still
     run per-folder over whatever photos exist for that folder.
     """
-    only_stems: set[str] | None = None
+    only_shot_keys: set[str] | None = None
     if files:
         selected = [Path(f).expanduser().resolve() for f in files]
         selected = [
@@ -508,7 +510,7 @@ def scan_folder(
         discovered = selected
         # Scope the (expensive) AI pass to just the picked files, so a 6-file
         # selection doesn't re-run AI over every photo already in the folder.
-        only_stems = {p.stem for p in selected}
+        only_shot_keys = {str(p.with_suffix("")) for p in selected}
     else:
         if folder is None:
             raise ValueError("either folder or files must be given")
@@ -591,7 +593,7 @@ def scan_folder(
                 if on_update:
                     on_update(progress)
 
-            run_ai_for_folder(folder_id, on_progress=_ai_cb, only_stems=only_stems)
+            run_ai_for_folder(folder_id, on_progress=_ai_cb, only_shot_keys=only_shot_keys)
         except ScanCancelled:
             cancelled = True
         except Exception as e:

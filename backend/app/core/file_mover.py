@@ -22,23 +22,20 @@ def move_photos(photo_ids: list[int], subfolder_name: str = "ToReview", pair_wit
 
     with tx() as conn:
         rows = conn.execute(
-            f"SELECT id, path, stem, ext, folder_id FROM photos "
+            f"SELECT id, path, stem, ext, folder_id, shot_key FROM photos "
             f"WHERE id IN ({','.join(['?'] * len(photo_ids))}) AND deleted_at IS NULL",
             photo_ids,
         ).fetchall()
         targets = [dict(r) for r in rows]
 
         if pair_with_sidecar and targets:
-            keys = {(r["folder_id"], r["stem"]) for r in targets}
+            keys = list({r["shot_key"] for r in targets})
             seen = {r["path"] for r in targets}
-            placeholders = " OR ".join(["(folder_id=? AND stem=?)"] * len(keys))
-            params: list = []
-            for fid, stem in keys:
-                params.extend([fid, stem])
+            placeholders = ",".join(["?"] * len(keys))
             sidecars = conn.execute(
-                f"SELECT id, path, stem, ext, folder_id FROM photos "
-                f"WHERE ({placeholders}) AND deleted_at IS NULL",
-                params,
+                f"SELECT id, path, stem, ext, folder_id, shot_key FROM photos "
+                f"WHERE shot_key IN ({placeholders}) AND deleted_at IS NULL",
+                keys,
             ).fetchall()
             for s in sidecars:
                 if s["path"] not in seen:

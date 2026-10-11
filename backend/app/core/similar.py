@@ -11,7 +11,7 @@ from app.db.schema import tx
 
 def find_similar_groups(folder_id: int, threshold: int = 16) -> list[dict]:
     """Group photos by pHash similarity using union-find. Operates at the SHOT
-    level (one entry per stem) so ARW+HIF pairs are treated as a single unit.
+    level (one entry per shot_key) so ARW+HIF pairs are treated as a single unit.
 
     Args:
         folder_id: folder primary key
@@ -23,7 +23,7 @@ def find_similar_groups(folder_id: int, threshold: int = 16) -> list[dict]:
         sorted by group size desc.
     """
     with tx() as conn:
-        # Pick one representative phash per stem; prefer ARW (richest preview).
+        # Pick one representative phash per shot; prefer ARW (richest preview).
         rows = conn.execute(
             """
             SELECT stem, MIN(shot_at) AS shot_at,
@@ -47,7 +47,7 @@ def find_similar_groups(folder_id: int, threshold: int = 16) -> list[dict]:
                    MAX(is_cluster_best) AS is_cluster_best
             FROM photos
             WHERE folder_id=? AND deleted_at IS NULL AND phash IS NOT NULL
-            GROUP BY stem
+            GROUP BY shot_key
             ORDER BY shot_at IS NULL, shot_at
             """,
             (folder_id,),

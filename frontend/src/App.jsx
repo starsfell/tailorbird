@@ -476,7 +476,7 @@ export default function App() {
     const list = shots.filter(s => selected.has(s.primary_id))
     if (list.length < 1) { alert('请先选照片'); return }
     const final = list.length > 9
-      ? [...list].sort((a, b) => a.stem.localeCompare(b.stem)).slice(0, 9)
+      ? [...list].sort((a, b) => (a.shot_at ?? Infinity) - (b.shot_at ?? Infinity) || a.stem.localeCompare(b.stem)).slice(0, 9)
       : list
     setCompare(final)
     // 打开对比后清空"已选":不管下一次关对比走哪条路径(Esc/移出对比自动关/删剩下),

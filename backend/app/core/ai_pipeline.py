@@ -178,28 +178,28 @@ def recompute_focus_weights(folder_id: int) -> int:
 def run_ai_for_folder(
     folder_id: int,
     on_progress: Callable[[int, int], None] | None = None,
-    only_stems: set[str] | None = None,
+    only_shot_keys: set[str] | None = None,
 ) -> dict:
     """Run AI on shots in a folder. Propagates results to all member photos.
 
-    When `only_stems` is given, restrict the AI pass to just those stems — used
+    When `only_shot_keys` is given, restrict the AI pass to just those shots — used
     by subset scans so picking 6 files doesn't re-run AI over the whole folder.
     """
     with tx() as conn:
         rows = conn.execute(
             """
-            SELECT stem, GROUP_CONCAT(id) AS ids, GROUP_CONCAT(path) AS paths,
+            SELECT stem, shot_key, GROUP_CONCAT(id) AS ids, GROUP_CONCAT(path) AS paths,
                    GROUP_CONCAT(ext) AS exts, MAX(focus_point) AS focus_point
             FROM photos
             WHERE folder_id=? AND deleted_at IS NULL
-            GROUP BY stem
+            GROUP BY shot_key
             ORDER BY MIN(shot_at) IS NULL, MIN(shot_at)
             """,
             (folder_id,),
         ).fetchall()
     shots = [dict(r) for r in rows]
-    if only_stems is not None:
-        shots = [s for s in shots if s["stem"] in only_stems]
+    if only_shot_keys is not None:
+        shots = [s for s in shots if s["shot_key"] in only_shot_keys]
 
     total = len(shots)
     done = 0

@@ -40,6 +40,27 @@ app.add_middleware(
 @app.on_event("startup")
 def _startup() -> None:
     init_db()
+    _recluster_after_shot_key_migration()
+
+
+def _recluster_after_shot_key_migration() -> None:
+    """One-time: cluster_ids written before shot_key existed merged same-named
+    files from different sub-folders (102MSDCF/104MSDCF…). Re-cluster the
+    folders that have such name collisions; user_version marks it done."""
+    from app.core.scanner import _cluster_photos
+    with tx() as conn:
+        if conn.execute("PRAGMA user_version").fetchone()[0] >= 1:
+            return
+        folder_ids = [r[0] for r in conn.execute(
+            """SELECT DISTINCT folder_id FROM photos
+               WHERE deleted_at IS NULL
+               GROUP BY folder_id, stem
+               HAVING COUNT(DISTINCT shot_key) > 1"""
+        ).fetchall()]
+    for fid in folder_ids:
+        _cluster_photos(fid)
+    with tx() as conn:
+        conn.execute("PRAGMA user_version = 1")
 
 
 _scan_state: dict = {"progress": ScanProgress(), "thread": None, "folder": None}
@@ -281,7 +302,7 @@ def list_shots(
     limit: int = 5000,
     offset: int = 0,
 ) -> dict:
-    """Return one entry per shot (grouped by stem).
+    """Return one entry per shot (grouped by shot_key = path minus extension).
 
     If tag_ids is given, shots are filtered so they have at least one (or-mode)
     or all (and-mode) of the given tags on any sibling photo. Works across
@@ -303,8 +324,8 @@ def list_shots(
             raise HTTPException(400, "tag_ids must be comma-separated integers")
     if untagged:
         where.append(
-            """(folder_id, stem) NOT IN (
-                SELECT p2.folder_id, p2.stem FROM photos p2
+            """shot_key NOT IN (
+                SELECT p2.shot_key FROM photos p2
                 JOIN photo_tags pt ON pt.photo_id = p2.id
                 WHERE p2.deleted_at IS NULL
             )"""
@@ -325,8 +346,8 @@ def list_shots(
                     continue
                 ph = ",".join(["?"] * len(desc_set))
                 where.append(
-                    f"""(folder_id, stem) IN (
-                        SELECT p2.folder_id, p2.stem FROM photos p2
+                    f"""shot_key IN (
+                        SELECT p2.shot_key FROM photos p2
                         JOIN photo_tags pt ON pt.photo_id = p2.id
                         WHERE pt.tag_id IN ({ph}) AND p2.deleted_at IS NULL
                     )"""
@@ -341,8 +362,8 @@ def list_shots(
             if all_desc:
                 ph = ",".join(["?"] * len(all_desc))
                 where.append(
-                    f"""(folder_id, stem) IN (
-                        SELECT p2.folder_id, p2.stem FROM photos p2
+                    f"""shot_key IN (
+                        SELECT p2.shot_key FROM photos p2
                         JOIN photo_tags pt ON pt.photo_id = p2.id
                         WHERE pt.tag_id IN ({ph}) AND p2.deleted_at IS NULL
                     )"""
@@ -387,7 +408,7 @@ def list_shots(
             MAX(user_mark) AS user_mark
         FROM photos
         WHERE {' AND '.join(where)}
-        GROUP BY folder_id, stem
+        GROUP BY shot_key
         ORDER BY {order_clause}
         LIMIT ? OFFSET ?
     """
@@ -515,15 +536,15 @@ def _pick_render_row(conn, photo_id: int, columns: str) -> dict | None:
     """Return the DB row to actually render for `photo_id`, picking the
     fastest-decoding sibling when one exists (see _RENDER_RANK)."""
     self_row = conn.execute(
-        f"SELECT id, folder_id, stem, ext, {columns} FROM photos WHERE id=?",
+        f"SELECT id, shot_key, ext, {columns} FROM photos WHERE id=?",
         (photo_id,),
     ).fetchone()
     if not self_row:
         return None
     sibs = conn.execute(
-        f"""SELECT id, folder_id, stem, ext, {columns} FROM photos
-            WHERE folder_id=? AND stem=? AND id!=? AND deleted_at IS NULL""",
-        (self_row["folder_id"], self_row["stem"], photo_id),
+        f"""SELECT id, shot_key, ext, {columns} FROM photos
+            WHERE shot_key=? AND id!=? AND deleted_at IS NULL""",
+        (self_row["shot_key"], photo_id),
     ).fetchall()
     best = self_row
     best_rank = _RENDER_RANK.get(self_row["ext"], 9)
@@ -749,14 +770,14 @@ def _resolve_tag_path(conn, path: str, *, create_missing: bool = True) -> int | 
 
 
 def _expand_to_siblings(conn, photo_ids: list[int]) -> list[int]:
-    """Given primary photo_ids, return ids of all live siblings (same folder + stem)."""
+    """Given primary photo_ids, return ids of all live siblings (same shot_key)."""
     if not photo_ids:
         return []
     placeholders = ",".join(["?"] * len(photo_ids))
     rows = conn.execute(
         f"""SELECT DISTINCT p2.id
             FROM photos p1 JOIN photos p2
-              ON p1.folder_id = p2.folder_id AND p1.stem = p2.stem
+              ON p1.shot_key = p2.shot_key
             WHERE p1.id IN ({placeholders}) AND p2.deleted_at IS NULL""",
         photo_ids,
     ).fetchall()
@@ -906,7 +927,7 @@ def export_tag(req: ExportTagReq) -> dict:
 
         ph = ",".join(["?"] * len(descendants))
         photo_rows = conn.execute(
-            f"""SELECT DISTINCT p.id, p.path, p.stem, p.ext, p.folder_id
+            f"""SELECT DISTINCT p.id, p.path, p.stem, p.ext, p.folder_id, p.shot_key
                 FROM photos p JOIN photo_tags pt ON pt.photo_id = p.id
                 WHERE pt.tag_id IN ({ph}) AND p.deleted_at IS NULL""",
             list(descendants),
@@ -914,16 +935,13 @@ def export_tag(req: ExportTagReq) -> dict:
         targets = [dict(r) for r in photo_rows]
 
         if req.pair_with_sidecar and targets:
-            keys = {(r["folder_id"], r["stem"]) for r in targets}
+            keys = list({r["shot_key"] for r in targets})
             seen = {r["path"] for r in targets}
-            placeholders = " OR ".join(["(folder_id=? AND stem=?)"] * len(keys))
-            params: list = []
-            for fid, stem in keys:
-                params.extend([fid, stem])
+            placeholders = ",".join(["?"] * len(keys))
             sidecars = conn.execute(
-                f"SELECT id, path, stem, ext, folder_id FROM photos "
-                f"WHERE ({placeholders}) AND deleted_at IS NULL",
-                params,
+                f"SELECT id, path, stem, ext, folder_id, shot_key FROM photos "
+                f"WHERE shot_key IN ({placeholders}) AND deleted_at IS NULL",
+                keys,
             ).fetchall()
             for s in sidecars:
                 if s["path"] not in seen:
@@ -1264,7 +1282,7 @@ def annotate(req: AnnotateReq) -> dict:
 
     with tx() as conn:
         row = conn.execute(
-            "SELECT id, path, stem, folder_id, focus_point FROM photos WHERE id=?",
+            "SELECT id, path, stem, shot_key, focus_point FROM photos WHERE id=?",
             (req.photo_id,),
         ).fetchone()
     if not row:
@@ -1306,8 +1324,8 @@ def annotate(req: AnnotateReq) -> dict:
 
     with tx() as conn:
         members = conn.execute(
-            "SELECT id FROM photos WHERE folder_id=? AND stem=? AND deleted_at IS NULL",
-            (row["folder_id"], row["stem"]),
+            "SELECT id FROM photos WHERE shot_key=? AND deleted_at IS NULL",
+            (row["shot_key"],),
         ).fetchall()
         for m in members:
             conn.execute(

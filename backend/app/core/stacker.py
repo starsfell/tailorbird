@@ -129,14 +129,14 @@ def _resolve_source_path(photo_id: int) -> tuple[Path, str]:
     Prefers ARW > HIF > others. Returns (path, stem)."""
     with tx() as conn:
         row = conn.execute(
-            "SELECT folder_id, stem, path, ext FROM photos WHERE id=?", (photo_id,)
+            "SELECT shot_key, stem, path, ext FROM photos WHERE id=?", (photo_id,)
         ).fetchone()
         if not row:
             raise ValueError(f"photo {photo_id} not found")
         siblings = conn.execute(
             """SELECT path, ext FROM photos
-               WHERE folder_id=? AND stem=? AND deleted_at IS NULL""",
-            (row["folder_id"], row["stem"]),
+               WHERE shot_key=? AND deleted_at IS NULL""",
+            (row["shot_key"],),
         ).fetchall()
     arw = next((s for s in siblings if s["ext"] == ".arw"), None)
     if arw:

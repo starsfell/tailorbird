@@ -45,6 +45,9 @@ CREATE TABLE IF NOT EXISTS photos (
     deleted_at REAL,
     error TEXT,
     analyzed_at REAL,
+    -- One "shot" = all files sharing a path minus extension (ARW+HIF pair).
+    -- Not stem alone: sub-folders (102MSDCF/104MSDCF…) reuse names after rollover.
+    shot_key TEXT GENERATED ALWAYS AS (substr(path, 1, length(path) - length(ext))) VIRTUAL,
     FOREIGN KEY (folder_id) REFERENCES folders(id)
 );
 
@@ -126,6 +129,14 @@ def init_db() -> None:
         for col, typ in migrations:
             if col not in cols:
                 conn.execute(f"ALTER TABLE photos ADD COLUMN {col} {typ}")
+        # table_xinfo (not table_info) lists generated columns
+        xcols = {r[1] for r in conn.execute("PRAGMA table_xinfo(photos)").fetchall()}
+        if "shot_key" not in xcols:
+            conn.execute(
+                "ALTER TABLE photos ADD COLUMN shot_key TEXT "
+                "GENERATED ALWAYS AS (substr(path, 1, length(path) - length(ext))) VIRTUAL"
+            )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_photos_shot_key ON photos(shot_key)")
         # Migrate deletion_history for undo support
         dh_cols = {r[1] for r in conn.execute("PRAGMA table_info(deletion_history)").fetchall()}
         if "new_path" not in dh_cols:
