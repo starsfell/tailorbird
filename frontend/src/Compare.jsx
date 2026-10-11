@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { api } from './api.js'
 import { PanZoom } from './PanZoom.jsx'
 import { TagQuickBar } from './TagQuickBar.jsx'
@@ -25,6 +25,30 @@ const KEEP_TAG = '保留'     // 与 App.jsx 一致:批量"保留"标签名
 export function Compare({ shots, onClose, onDelete, onRemove, onBatchDelete, onBatchRemove, onUndo, allTags, countsByTag, onTagsApplied }) {
   const [linked, setLinked] = useState(true)
   const [shared, setShared] = useState({ scale: ZOOM_DEFAULT, offsetX: 0, offsetY: 0 })
+  // 曝光预览:纯前端 CSS 滤镜,不写回原图;对比组统一调节,关闭对比自动还原(state 不持久化)。
+  const [exposure, setExposure] = useState(0)   // 单位:档(EV),-1.5 ~ +1.5
+  // 纯 brightness() 是在已 gamma 编码的 sRGB 像素上直接相乘:高光一大片糊成
+  // 死白、色彩发闷,跟真实曝光的观感不一样。配一点反向的 contrast/saturate
+  // 做经验补偿(不是精确线性光计算——那得 canvas 逐像素算,500% 大图会掉帧),
+  // 视觉上更接近"提亮/压暗"而不是套了层滤镜。
+  const exposureFilter = exposure === 0 ? undefined : (() => {
+    const brightness = Math.pow(2, exposure)
+    const contrast = 1 + Math.min(0.25, Math.abs(exposure) * 0.15)
+    const saturate = 1 - Math.min(0.2, Math.max(0, exposure) * 0.12)
+    return `brightness(${brightness.toFixed(3)}) contrast(${contrast.toFixed(3)}) saturate(${saturate.toFixed(3)})`
+  })()
+
+  // 滑块拖动时原生 input 事件触发频率可能远超 60fps,每次都走 setState 会让
+  // 大图(500% 缩放)跟着抖。这里把提交节流到每帧最多一次,拖动手感更跟手。
+  const exposureRafRef = useRef(null)
+  const onExposureInput = useCallback((v) => {
+    if (exposureRafRef.current != null) cancelAnimationFrame(exposureRafRef.current)
+    exposureRafRef.current = requestAnimationFrame(() => {
+      exposureRafRef.current = null
+      setExposure(v)
+    })
+  }, [])
+  useEffect(() => () => { if (exposureRafRef.current != null) cancelAnimationFrame(exposureRafRef.current) }, [])
   const [bases, setBases] = useState({})
   const [indepT, setIndepT] = useState({})
   const [pickedIds, setPickedIds] = useState(new Set())
@@ -86,6 +110,7 @@ export function Compare({ shots, onClose, onDelete, onRemove, onBatchDelete, onB
   const resetView = () => {
     setShared({ scale: ZOOM_DEFAULT, offsetX: 0, offsetY: 0 })
     setIndepT({})
+    setExposure(0)
   }
 
   const hasTag = (s, name) => (s.tags || []).some(t => t.name === name)
@@ -204,6 +229,24 @@ export function Compare({ shots, onClose, onDelete, onRemove, onBatchDelete, onB
                 title="按当前删除模式删除所有对比中的图 (P)">{`删除全部 (${pickableShots.length})`}</button>
             </>
           )}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginRight: 4 }}>
+            <span style={{ fontSize: 12, color: 'var(--muted)' }}>曝光</span>
+            <input
+              type="range" min={-1.5} max={1.5} step={0.1} value={exposure}
+              onChange={(e) => onExposureInput(Number(e.target.value))}
+              style={{ width: 120 }}
+              title="仅预览,不影响原图"
+            />
+            <span style={{
+              fontSize: 12, fontVariantNumeric: 'tabular-nums', minWidth: 34, textAlign: 'right',
+              color: exposure !== 0 ? 'var(--accent)' : 'var(--muted)',
+            }}>
+              {exposure > 0 ? '+' : ''}{exposure.toFixed(1)}
+            </span>
+            {exposure !== 0 && (
+              <button onClick={() => setExposure(0)} style={{ padding: '2px 6px' }} title="重置曝光">⟲</button>
+            )}
+          </div>
           <button onClick={resetView}>0 重置</button>
           <button onClick={() => setLinked(v => !v)}>{linked ? '解除联动' : '开启联动'}</button>
           <button onClick={() => onUndo?.()} title="撤销上一步移走/删除 (Z)">↩ 撤销</button>
@@ -288,6 +331,7 @@ export function Compare({ shots, onClose, onDelete, onRemove, onBatchDelete, onB
                 onBaseChange={(b) => handleBase(s, b)}
                 transform={transformForShot(s)}
                 onTransform={(nt) => reportFromShot(s, nt)}
+                filter={exposureFilter}
               />
             </div>
           )

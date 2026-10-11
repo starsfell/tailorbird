@@ -595,6 +595,7 @@ export default function App() {
         onPickFiles={onHomePickFiles}
         onOpenTask={onOpenTask}
         onDeleteFolder={async (id) => { await api.deleteFolder(id); await refreshFolders() }}
+        onToggleFolderComplete={async (id, completed) => { await api.setFolderComplete(id, completed); await refreshFolders() }}
       />
     )
   }

@@ -19,6 +19,7 @@ export function PanZoom({
   src, transform, onTransform, children,
   initialFocus, onBaseChange,
   annotateMode = null, onAnnotateRect, onAnnotateClick,
+  filter,
 }) {
   const wrapRef = useRef(null)
   const stageRef = useRef(null)
@@ -37,18 +38,27 @@ export function PanZoom({
   const [base, setBase] = useState({ w: 0, h: 0 })
   const initAppliedRef = useRef(false)
 
+  // 调用方(Compare)里 onBaseChange/transform 通常是每次渲染都新建的内联值。
+  // 之前 recalcBase 把它们放进自己的依赖数组,导致"setBase → 上层重渲染 →
+  // 这些值换身份 → recalcBase 换身份 → effect 重跑 → 又 setBase"的死循环
+  // (在真实对比页两张大图联动时曾触发页面崩溃)。改用 ref 存最新值,
+  // recalcBase 的身份只在挂载和 src 变化时才需要变 —— 依赖数组因此清空。
+  const latestRef = useRef(null)
+  latestRef.current = { onBaseChange, transform, internal, initialFocus, setT }
+
   const recalcBase = useCallback(() => {
     const wrap = wrapRef.current
     const img = imgRef.current
     if (!wrap || !img || !img.naturalWidth) return
+    const { onBaseChange, transform, internal, initialFocus, setT } = latestRef.current
     const cw = wrap.clientWidth
     const ch = wrap.clientHeight
     const iw = img.naturalWidth
     const ih = img.naturalHeight
     const scale = Math.min(cw / iw, ch / ih)
     const newBase = { w: Math.round(iw * scale), h: Math.round(ih * scale) }
-    setBase(newBase)
-    if (onBaseChange) onBaseChange(newBase)
+    setBase(prev => (prev.w === newBase.w && prev.h === newBase.h) ? prev : newBase)
+    onBaseChange?.(newBase)
 
     if (!initAppliedRef.current && initialFocus && newBase.w > 0) {
       const cur = transform || internal
@@ -67,7 +77,7 @@ export function PanZoom({
         initAppliedRef.current = true
       }
     }
-  }, [initialFocus, setT, transform, internal, onBaseChange])
+  }, [])
 
   useEffect(() => { initAppliedRef.current = false }, [src])
 
@@ -238,7 +248,7 @@ export function PanZoom({
           src={src}
           draggable={false}
           onLoad={recalcBase}
-          style={{ width: '100%', height: '100%', display: 'block', userSelect: 'none' }}
+          style={{ width: '100%', height: '100%', display: 'block', userSelect: 'none', filter: filter || undefined }}
         />
         {children}
         {draftRect && (

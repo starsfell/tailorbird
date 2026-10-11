@@ -137,6 +137,10 @@ def init_db() -> None:
         if "parent_id" not in tag_cols:
             conn.execute("ALTER TABLE tags ADD COLUMN parent_id INTEGER REFERENCES tags(id) ON DELETE SET NULL")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_tags_parent ON tags(parent_id)")
+        # Migrate folders table: mark-as-done state (home screen "已完成" badge)
+        folder_cols = {r[1] for r in conn.execute("PRAGMA table_info(folders)").fetchall()}
+        if "completed_at" not in folder_cols:
+            conn.execute("ALTER TABLE folders ADD COLUMN completed_at REAL")
         conn.commit()
 
 

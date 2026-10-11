@@ -29,6 +29,8 @@ _BASIC_TAGS = [
     "-Rating",
     "-XMP:Rating",
     "-XMP:Label",
+    "-IPTC:Keywords",
+    "-XMP-dc:Subject",
 ]
 
 _FOCUS_TAGS = [
@@ -56,8 +58,11 @@ _FOCUS_TAGS = [
 def read_exif(path: Path) -> dict[str, Any]:
     """Run exiftool once and return a flat dict. Returns empty dict on failure."""
     try:
+        # -charset iptc=UTF8: without it, exiftool assumes IPTC:Keywords is
+        # Latin-1, so Chinese keyword text comes back mangled (or, on write,
+        # gets silently replaced with "?"). XMP is UTF-8 natively already.
         result = subprocess.run(
-            [EXIFTOOL_BIN, "-j", "-n", *_BASIC_TAGS, *_FOCUS_TAGS, str(path)],
+            [EXIFTOOL_BIN, "-j", "-n", "-charset", "iptc=UTF8", *_BASIC_TAGS, *_FOCUS_TAGS, str(path)],
             capture_output=True,
             text=True,
             timeout=15,

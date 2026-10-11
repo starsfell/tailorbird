@@ -29,6 +29,8 @@ export const api = {
   photoDetail: (id) => req(`/api/photo/${id}/detail`),
   listFolders: () => req('/api/folders'),
   deleteFolder: (id) => req(`/api/folders/${id}`, { method: 'DELETE' }),
+  setFolderComplete: (id, completed) =>
+    req(`/api/folders/${id}/complete`, { method: 'POST', body: JSON.stringify({ completed }) }),
   recompute: (folder, runAi = false, preset = 'intermediate') =>
     req('/api/recompute', {
       method: 'POST',

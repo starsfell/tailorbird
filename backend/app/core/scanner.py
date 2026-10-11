@@ -100,6 +100,26 @@ def _parse_basic_exif(exif: dict) -> dict:
     }
 
 
+def _parse_keywords(exif: dict) -> list[str]:
+    """Tags previously written into the file's IPTC:Keywords / XMP-dc:Subject
+    (by tailorbird's own XMP write-back, or by other tools like Lightroom).
+    Read back on every scan so tags survive even a full DB row deletion."""
+    def _as_list(v):
+        if v is None:
+            return []
+        if isinstance(v, list):
+            return [str(x).strip() for x in v if str(x).strip()]
+        s = str(v).strip()
+        return [s] if s else []
+    seen: set[str] = set()
+    out: list[str] = []
+    for k in _as_list(exif.get("Keywords")) + _as_list(exif.get("Subject")):
+        if k not in seen:
+            seen.add(k)
+            out.append(k)
+    return out
+
+
 def _analyze_one(path: Path) -> dict:
     """Heavy per-file work: decode preview, EXIF (incl. AF point), thumb, sharpness, phash."""
     base = {
@@ -118,6 +138,7 @@ def _analyze_one(path: Path) -> dict:
         "focal_length": None, "lens_model": None, "camera_model": None,
         "analyzed_at": time.time(),
         "error": None,
+        "keywords": [],
     }
     try:
         img = load_preview(path)
@@ -125,6 +146,7 @@ def _analyze_one(path: Path) -> dict:
         shot_at = parse_shot_at(exif)
         focus = parse_focus_point(exif)
         basic = _parse_basic_exif(exif)
+        base["keywords"] = _parse_keywords(exif)
         w, h = img.size
 
         thumb = make_thumbnail(img, THUMB_SIZE)
@@ -173,6 +195,39 @@ def _upsert_photo(folder_id: int, rec: dict) -> None:
                 analyzed_at=excluded.analyzed_at, error=excluded.error
             """,
             {**rec, "folder_id": folder_id},
+        )
+
+
+def _sync_tags_from_keywords(rec: dict) -> None:
+    """Rebuild this photo's tag links from keywords found in the file itself.
+    Additive only (never removes a DB tag absent from the file) — a tag the
+    user just added may still be waiting on its background XMP write."""
+    keywords = rec.get("keywords") or []
+    if not keywords:
+        return
+    with tx() as conn:
+        row = conn.execute("SELECT id FROM photos WHERE path = ?", (rec["path"],)).fetchone()
+        if row is None:
+            return
+        photo_id = row["id"]
+        tag_ids = []
+        for name in keywords:
+            trow = conn.execute("SELECT id FROM tags WHERE name = ? COLLATE NOCASE", (name,)).fetchone()
+            if trow:
+                tag_ids.append(trow["id"])
+            else:
+                cur = conn.execute(
+                    "INSERT INTO tags (name, created_at) VALUES (?, ?)", (name, time.time()),
+                )
+                tag_ids.append(cur.lastrowid)
+        for tid in tag_ids:
+            conn.execute(
+                "INSERT OR IGNORE INTO photo_tags (photo_id, tag_id) VALUES (?, ?)",
+                (photo_id, tid),
+            )
+        conn.execute(
+            "UPDATE photos SET xmp_tags = ? WHERE id = ?",
+            (json.dumps(keywords, ensure_ascii=False), photo_id),
         )
 
 
@@ -506,6 +561,7 @@ def scan_folder(
                 break
             rec = fut.result()
             _upsert_photo(folder_id, rec)
+            _sync_tags_from_keywords(rec)
             progress.done += 1
             if rec.get("error"):
                 progress.failed += 1

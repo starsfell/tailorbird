@@ -87,6 +87,7 @@ def write_xmp(photo_ids: Iterable[int]) -> dict:
 
         args = [
             EXIFTOOL_BIN, "-overwrite_original", "-q", "-q",
+            "-charset", "iptc=UTF8",
             f"-XMP:Rating={rating}",
         ]
         if label:
@@ -144,6 +145,7 @@ def clear_xmp(photo_ids: Iterable[int]) -> dict:
         prev = _load_prev_tags(rec.get("xmp_tags"))
         args = [
             EXIFTOOL_BIN, "-overwrite_original", "-q", "-q",
+            "-charset", "iptc=UTF8",
             "-XMP:Rating=", "-XMP:Label=", "-XMP:CreatorTool=",
         ]
         for kw in prev:

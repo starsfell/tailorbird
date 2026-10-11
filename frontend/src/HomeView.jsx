@@ -11,13 +11,20 @@ function fmtTime(ts) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 }
 
-export function HomeView({ folders, busy, onPickFolder, onPickFiles, onOpenTask, onDeleteFolder }) {
+function fmtSize(bytes) {
+  if (!bytes) return '0 MB'
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  let n = bytes, i = 0
+  while (n >= 1024 && i < units.length - 1) { n /= 1024; i++ }
+  return `${n.toFixed(n >= 10 || i === 0 ? 0 : 1)} ${units[i]}`
+}
+
+export function HomeView({ folders, busy, onPickFolder, onPickFiles, onOpenTask, onDeleteFolder, onToggleFolderComplete }) {
   const [runAi, setRunAi] = useState(false)
   return (
     <div className="home">
       <div className="home-hero">
-        <h1 className="home-logo">tailorbird</h1>
-        <p className="home-tagline">鸟类摄影挑片助手 · 选择照片，开始一次挑片任务</p>
+        <h1 className="home-logo">Tailorbird ｜ 捡鸟</h1>
         <div className="home-actions">
           <button className="home-card" onClick={() => onPickFolder(runAi)} disabled={busy}>
             <div className="home-card-icon"><IconFolder size={32} /></div>
@@ -50,19 +57,31 @@ export function HomeView({ folders, busy, onPickFolder, onPickFiles, onOpenTask,
                 onClick={() => onOpenTask(f.path)}
                 title={f.path}
               >
-                <button
-                  className="home-task-del"
-                  title="从 tailorbird 移除此任务(不删磁盘文件)"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    if (confirm(`从历史中移除「${f.path.replace(/^.*\//, '')}」?\n(只是移除记录,不会删除磁盘上的照片)`)) {
-                      onDeleteFolder?.(f.id)
-                    }
-                  }}
-                >✕</button>
-                <div className="home-task-name">{f.path.replace(/^.*\//, '')}</div>
+                <div className="home-task-head">
+                  <div className="home-task-name">{f.path.replace(/^.*\//, '')}</div>
+                  <div className="home-task-controls">
+                    <button
+                      className={'home-task-done' + (f.completed_at ? ' done' : '')}
+                      title={f.completed_at ? '点击改回「待捡图」' : '点击标记为「已完成」'}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onToggleFolderComplete?.(f.id, !f.completed_at)
+                      }}
+                    >{f.completed_at ? '已完成' : '待捡图'}</button>
+                    <button
+                      className="home-task-del"
+                      title="从 tailorbird 移除此任务(不删磁盘文件)"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        if (confirm(`从历史中移除「${f.path.replace(/^.*\//, '')}」?\n(只是移除记录,不会删除磁盘上的照片)`)) {
+                          onDeleteFolder?.(f.id)
+                        }
+                      }}
+                    >✕</button>
+                  </div>
+                </div>
                 <div className="home-task-meta">
-                  {(f.alive_count ?? f.photo_count ?? 0)} 张 · {fmtTime(f.last_scanned_at)}
+                  {(f.alive_count ?? f.photo_count ?? 0)} 张 · {fmtSize(f.alive_size)} · {fmtTime(f.last_scanned_at)}
                 </div>
                 <div className="home-task-path">{f.path}</div>
               </div>

@@ -6,7 +6,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
@@ -1014,10 +1014,14 @@ def delete_tag(tag_id: int, children: str = "lift") -> dict:
 
 
 @app.post("/api/photo-tags/batch")
-def batch_photo_tags(req: PhotoTagsBatchReq) -> dict:
+def batch_photo_tags(req: PhotoTagsBatchReq, background_tasks: BackgroundTasks) -> dict:
     """Attach/detach tags on a set of shots (input is primary photo_ids;
     backend expands to all live siblings sharing the same stem, so ARW+HIF
-    move together). add_tag_names creates tags on the fly."""
+    move together). add_tag_names creates tags on the fly.
+
+    Also schedules a background XMP write-back so tags land in the actual
+    file's Keywords, not just the DB — that's what lets a later rescan
+    recover them even after the task/folder was deleted from tailorbird."""
     import time
     if not req.photo_ids:
         raise HTTPException(400, "photo_ids is empty")
@@ -1071,6 +1075,9 @@ def batch_photo_tags(req: PhotoTagsBatchReq) -> dict:
                 [*sibling_ids, *req.remove_tag_ids],
             )
             detached = cur.rowcount
+
+    if sibling_ids:
+        background_tasks.add_task(write_xmp, sibling_ids)
 
     return {
         "attached": attached,
@@ -1158,6 +1165,25 @@ def delete_folder(folder_id: int) -> dict:
     }
 
 
+class SetFolderCompleteReq(BaseModel):
+    completed: bool
+
+
+@app.post("/api/folders/{folder_id}/complete")
+def set_folder_complete(folder_id: int, req: SetFolderCompleteReq) -> dict:
+    """Mark a folder as done (or not) on the home screen. Purely a manual
+    flag the user sets — doesn't affect scanning/photos."""
+    import time
+
+    with tx() as conn:
+        row = conn.execute("SELECT id FROM folders WHERE id = ?", (folder_id,)).fetchone()
+        if row is None:
+            raise HTTPException(404, "folder not found")
+        completed_at = time.time() if req.completed else None
+        conn.execute("UPDATE folders SET completed_at = ? WHERE id = ?", (completed_at, folder_id))
+    return {"folder_id": folder_id, "completed": req.completed, "completed_at": completed_at}
+
+
 def _reconcile_missing_files(conn, folder_id: int | None = None) -> int:
     """Soft-delete photo rows whose file no longer exists on disk (e.g. removed
     outside the app via Finder), so counts/listings stay accurate without a
@@ -1186,9 +1212,10 @@ def list_folders() -> dict:
             _reconcile_missing_files(conn, fid)
         rows = conn.execute(
             """
-            SELECT folders.id, folders.path, folders.last_scanned_at,
+            SELECT folders.id, folders.path, folders.last_scanned_at, folders.completed_at,
                    COUNT(photos.id) AS photo_count,
-                   SUM(CASE WHEN photos.deleted_at IS NULL THEN 1 ELSE 0 END) AS alive_count
+                   SUM(CASE WHEN photos.deleted_at IS NULL THEN 1 ELSE 0 END) AS alive_count,
+                   SUM(CASE WHEN photos.deleted_at IS NULL THEN photos.size ELSE 0 END) AS alive_size
             FROM folders
             LEFT JOIN photos ON photos.folder_id = folders.id
             GROUP BY folders.id

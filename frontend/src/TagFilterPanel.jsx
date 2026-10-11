@@ -201,6 +201,32 @@ function pruneTree(roots, term) {
   return roots.map(visit).filter(Boolean)
 }
 
+// Root tags rendered as a dedicated collapsible section (like 星级/状态)
+// instead of being mixed into the alphabetical tag list. Currently just
+// 「拍摄参数」(ISO/镜头/焦距/光圈 auto-tags) — buried among bird-species
+// tags it looked like it had disappeared, so it gets its own section title.
+const SECTION_TAG_NAMES = ['拍摄参数']
+
+function TagSection({ node, byId, expandedIds, toggleExpand, searchTerm, ...rowProps }) {
+  const expanded = expandedIds.has(node.id) || !!searchTerm
+  return (
+    <React.Fragment>
+      <div className="section-title clickable" onClick={() => toggleExpand(node.id)}>
+        <span style={{ display: 'inline-block', width: 10, color: 'var(--muted)' }}>
+          {expanded ? '▾' : '▸'}
+        </span>
+        {node.name}
+      </div>
+      {expanded && node.children.map(c => (
+        <TagTreeRow key={c.id} node={c} depth={1} byId={byId}
+          expandedIds={expandedIds} toggleExpand={toggleExpand}
+          searchTerm={searchTerm} {...rowProps}
+        />
+      ))}
+    </React.Fragment>
+  )
+}
+
 // Virtual status filters — computed from shot row fields, not real DB tags.
 // id is the wire format the App's refreshShots understands.
 const STATUS_GROUPS = [
@@ -315,6 +341,22 @@ export function TagFilterPanel({
     })
   }
 
+  // 「常用」「自定义」这两个分组标题(不对应真实 tag,没有 id)自己的折叠状态。
+  const [groupCollapsed, setGroupCollapsed] = useState(() => {
+    try {
+      const raw = localStorage.getItem('tagGroupCollapsed')
+      return new Set(raw ? JSON.parse(raw) : [])
+    } catch { return new Set() }
+  })
+  const toggleGroupCollapsed = (name) => {
+    setGroupCollapsed(prev => {
+      const next = new Set(prev)
+      if (next.has(name)) next.delete(name); else next.add(name)
+      try { localStorage.setItem('tagGroupCollapsed', JSON.stringify([...next])) } catch {}
+      return next
+    })
+  }
+
   // 「拍摄参数」(ISO/镜头/焦距/光圈自动标签)默认折叠,不再自动展开 —
   // 用户自己点开后,展开状态会照常存进上面的 expandedIds/localStorage。
   //
@@ -348,8 +390,10 @@ export function TagFilterPanel({
 
   const isFav = (n) => n.is_favorite
   const isPinned = (n) => PINNED_NAMES.includes(n.name)
-  const favRoots = pruned.filter(n => isFav(n) && !isPinned(n))
-  const nonFavRoots = pruned.filter(n => !isFav(n) && !isPinned(n))
+  const isSection = (n) => SECTION_TAG_NAMES.includes(n.name)
+  const sectionRoots = pruned.filter(n => isSection(n))
+  const favRoots = pruned.filter(n => isFav(n) && !isPinned(n) && !isSection(n))
+  const nonFavRoots = pruned.filter(n => !isFav(n) && !isPinned(n) && !isSection(n))
 
   // 置顶标签:按 PINNED_TAGS 的顺序取真实标签(存在才显示)。
   const pinnedNodes = PINNED_TAGS
@@ -464,16 +508,36 @@ export function TagFilterPanel({
             statusCounts={statusCounts}
           />
         )}
+        {sectionRoots.map(n => (
+          <TagSection key={n.id} node={n} byId={byId}
+            expandedIds={expandedIds} toggleExpand={toggleExpand}
+            searchTerm={q.trim()}
+            selectedIds={tagFilter} onToggle={toggle}
+            countsByTag={countsByTag}
+            onContext={(tag, anchor) => setCtx({ tag, anchor })}
+            selectedCount={selectedCount} onQuickAddToSelection={onQuickAddToSelection}
+          />
+        ))}
         {favRoots.length > 0 && (
           <>
-            <div className="section-title">常用</div>
-            {renderTree(favRoots)}
+            <div className="section-title clickable" onClick={() => toggleGroupCollapsed('常用')}>
+              <span style={{ display: 'inline-block', width: 10, color: 'var(--muted)' }}>
+                {groupCollapsed.has('常用') ? '▸' : '▾'}
+              </span>
+              常用
+            </div>
+            {(!groupCollapsed.has('常用') || q.trim()) && renderTree(favRoots)}
           </>
         )}
         {nonFavRoots.length > 0 && (
           <>
-            {favRoots.length > 0 && <div className="section-title">全部</div>}
-            {renderTree(nonFavRoots)}
+            <div className="section-title clickable" onClick={() => toggleGroupCollapsed('自定义')}>
+              <span style={{ display: 'inline-block', width: 10, color: 'var(--muted)' }}>
+                {groupCollapsed.has('自定义') ? '▸' : '▾'}
+              </span>
+              自定义
+            </div>
+            {(!groupCollapsed.has('自定义') || q.trim()) && renderTree(nonFavRoots)}
           </>
         )}
         {pruned.length === 0 && (
