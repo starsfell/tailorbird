@@ -4,15 +4,17 @@ import { buildTagTree, descendantIds, tagPath } from './tagTree.js'
 import { TagPickerDialog } from './TagPickerDialog.jsx'
 import { TagExportDialog } from './TagExportDialog.jsx'
 import { IconEdit, IconPlus, IconFolder, IconBox, IconTrash } from './Icons.jsx'
+import { GRADES } from './grades.js'
 
 const PRESET_COLORS = [
   null, '#f0576a', '#ffab4f', '#ffd970', '#4fe1c4', '#5f82ff', '#a983ff', '#ff7aa8',
 ]
 
-// 这两个标签从普通标签树里单独拉出来,固定置顶,彩色加粗显示。
+// 精修/保留 + 选片等级 A-D 从普通标签树里单独拉出来,固定置顶,彩色加粗显示。
 const PINNED_TAGS = [
   { name: '精修', color: 'var(--success)' },
   { name: '保留', color: 'var(--keep)' },
+  ...GRADES.map(g => ({ name: g.tag, color: g.color })),
 ]
 const PINNED_NAMES = PINNED_TAGS.map(p => p.name)
 

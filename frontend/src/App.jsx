@@ -190,8 +190,20 @@ export default function App() {
   useEffect(() => { refreshFolders() }, [refreshFolders])
   useEffect(() => { refreshShots() }, [refreshShots])
   useEffect(() => { refreshUndoHistory() }, [refreshUndoHistory])
+  const gradeTagsEnsuredRef = useRef(false)
   useEffect(() => {
-    api.listTags().then(r => setAllTags(r.tags || [])).catch(() => {})
+    api.listTags().then(async r => {
+      const tags = r.tags || []
+      // 等级标签预先建好,侧栏里还没打过分也能看到 A-D 四行
+      const missing = GRADES.filter(g => !tags.some(t => t.name === g.tag))
+      if (missing.length && !gradeTagsEnsuredRef.current) {
+        gradeTagsEnsuredRef.current = true   // 只尝试一次,建失败也不反复刷
+        await Promise.all(missing.map(g => api.createTag(g.tag).catch(() => {})))
+        setTagsTick(t => t + 1)
+        return
+      }
+      setAllTags(tags)
+    }).catch(() => {})
   }, [tagsTick])
 
   const pickShots = useMemo(() => shots.filter(s => pickIds.has(s.primary_id)), [shots, pickIds])
@@ -435,6 +447,9 @@ export default function App() {
   const onQuickAddTagToSelected = async (tagId) => {
     const ids = Array.from(selected)
     if (ids.length === 0) return
+    // 等级互斥:走 onGrade,顺手去掉其它等级
+    const grade = GRADES.find(g => g.tag === allTags.find(t => t.id === tagId)?.name)
+    if (grade) return onGrade(ids, grade.key)
     try {
       await api.batchPhotoTags(ids, { add_tag_ids: [tagId] })
       await refreshShots()
