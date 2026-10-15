@@ -12,6 +12,8 @@ import { TagCenterView } from './TagCenterView.jsx'
 import { TriageView } from './TriageView.jsx'
 import { StackDialog } from './StackDialog.jsx'
 import { HomeView } from './HomeView.jsx'
+import { PickView } from './PickView.jsx'
+import { GRADES } from './grades.js'
 
 const REFINE_TAG = '精修'   // 批量打"精修"标签 / 移动到「精修」子文件夹用的固定标签名
 const KEEP_TAG = '保留'     // 批量打"保留"标签用的固定标签名
@@ -88,6 +90,8 @@ export default function App() {
   const [folders, setFolders] = useState([])
   const [detail, setDetail] = useState(null)
   const [compare, setCompare] = useState(null)
+  const [pickIds, setPickIds] = useState(new Set())   // 选片页这一批(网格多选后按 Y 带进来)
+  useEffect(() => { setPickIds(new Set()) }, [folder])
   const [similarTick, setSimilarTick] = useState(0)   // bump to force SimilarView re-fetch
   const [tagDialogIds, setTagDialogIds] = useState(null)  // Set<id> | null
   const [stackDialogOpen, setStackDialogOpen] = useState(false)
@@ -189,6 +193,10 @@ export default function App() {
   useEffect(() => {
     api.listTags().then(r => setAllTags(r.tags || [])).catch(() => {})
   }, [tagsTick])
+
+  const pickShots = useMemo(() => shots.filter(s => pickIds.has(s.primary_id)), [shots, pickIds])
+  // 快捷键里的全选/选非最佳/全选删除/Space 只作用于当前页面能看到的那批
+  const viewShots = tab === 'pick' ? pickShots : shots
 
   const countsByTag = useMemo(() => {
     const m = new Map()
@@ -434,6 +442,35 @@ export default function App() {
     } catch (e) { alert('标签操作失败: ' + e.message) }
   }
 
+  // 选片等级:四个等级互斥。gradeKey=null 清除等级;否则打上该等级并去掉其它等级。
+  const onGrade = async (ids, gradeKey) => {
+    if (!ids || ids.length === 0) return
+    const target = GRADES.find(g => g.key === gradeKey)
+    const removeIds = GRADES
+      .filter(g => g !== target)
+      .map(g => allTags.find(t => t.name === g.tag)?.id)
+      .filter(id => id != null)
+    if (!target && removeIds.length === 0) return
+    try {
+      await api.batchPhotoTags(ids, {
+        add_tag_names: target ? [target.tag] : [],
+        remove_tag_ids: removeIds,
+      })
+      await refreshShots()
+      setTagsTick(t => t + 1)
+    } catch (e) { alert('等级操作失败: ' + e.message) }
+  }
+
+  // 网格多选 → 选片页;已在选片页则回网格。没选也能回到上一批。
+  const openPick = () => {
+    if (tab === 'pick') { setTab('grid'); return }
+    if (selected.size > 0) {
+      setPickIds(new Set(selected))
+      setSelected(new Set())
+    }
+    setTab('pick')
+  }
+
   // 把所有带「精修」标签的照片移动到各自源目录下的「精修」子文件夹(没有就自动建)。
   const onMoveRefineToSubfolder = async () => {
     const tag = allTags.find(t => t.name === REFINE_TAG)
@@ -467,9 +504,9 @@ export default function App() {
     } catch (e) { alert('写 EXIF 失败: ' + e.message) }
   }
 
-  const openDetail = (shot) => {
-    const i = Math.max(0, shots.findIndex(s => s.primary_id === shot.primary_id))
-    setDetail({ list: shots, index: i })
+  const openDetail = (shot, list = shots) => {
+    const i = Math.max(0, list.findIndex(s => s.primary_id === shot.primary_id))
+    setDetail({ list, index: i })
   }
 
   const openCompare = () => {
@@ -495,14 +532,25 @@ export default function App() {
       if (stackDialogOpen) return
       // 左手键(A/D/C/T/B/R…)与右手键(L/J/K/;/N/U…)双套并行,方便左撇子右手操作。
       const k = e.key.toLowerCase()
-      if (k === 'a' || k === 'o') { e.preventDefault(); setSelected(new Set(shots.map(s => s.primary_id))) }   // 全选
+      if (k === 'y') { e.preventDefault(); openPick(); return }   // 选片页 进/出
+      if (tab === 'pick' && !e.metaKey && !e.ctrlKey && /^[0-4]$/.test(e.key)) {   // 选片等级 1-4=A-D, 0 清除
+        if (selected.size === 0) return
+        e.preventDefault()
+        const ids = Array.from(selected)
+        const g = e.key === '0' ? null : GRADES[Number(e.key) - 1]
+        // 选中的全都已是这个等级 → 再按一次取消
+        const allHave = g && ids.every(id => (viewShots.find(s => s.primary_id === id)?.tags || []).some(t => t.name === g.tag))
+        onGrade(ids, g && !allHave ? g.key : null)
+        return
+      }
+      if (k === 'a' || k === 'o') { e.preventDefault(); setSelected(new Set(viewShots.map(s => s.primary_id))) }   // 全选
       else if (e.key === 'Escape') { setSelected(new Set()) }
       else if (k === 'm') { e.preventDefault(); setSelected(new Set()) }   // 清空
       else if (k === 'b' || k === 'n') {   // 选非最佳
-        const ids = shots.filter(s => s.cluster_id != null && !s.is_cluster_best).map(s => s.primary_id)
+        const ids = viewShots.filter(s => s.cluster_id != null && !s.is_cluster_best).map(s => s.primary_id)
         setSelected(new Set(ids))
       }
-      else if (k === 'p') { e.preventDefault(); onDelete(new Set(shots.map(s => s.primary_id))) }   // 全选删除(删全部当前可见,有二次确认)
+      else if (k === 'p') { e.preventDefault(); onDelete(new Set(viewShots.map(s => s.primary_id))) }   // 全选删除(删全部当前可见,有二次确认)
       else if (k === 'd' || k === 'j') { e.preventDefault(); onDelete() }   // 删除
       else if (k === 'z') { e.preventDefault(); onUndo() }   // 撤销上一步移走/删除
       else if (k === 'c' || k === 'l') { e.preventDefault(); openCompare() }   // 对比
@@ -521,13 +569,13 @@ export default function App() {
       }
       else if (e.key === ' ') {
         e.preventDefault()
-        const first = shots.find(s => selected.has(s.primary_id))
-        if (first) openDetail(first)
+        const first = viewShots.find(s => selected.has(s.primary_id))
+        if (first) openDetail(first, viewShots)
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [shots, selected, detail, compare, tagDialogIds, stackDialogOpen])
+  }, [shots, selected, detail, compare, tagDialogIds, stackDialogOpen, tab, viewShots, allTags])
 
   const statusText = [
     scanStatus
@@ -646,6 +694,9 @@ export default function App() {
         <div className="status">{statusText}</div>
         <div className="tabs">
           <button className={tab === 'grid' ? 'active' : ''} onClick={() => setTab('grid')}>网格</button>
+          <button className={tab === 'pick' ? 'active' : ''} onClick={openPick} title="网格多选后按 Y 进入选片(大格子看姿态/构图,打 A/B/C/D)">
+            选片{pickIds.size > 0 ? ` ${pickShots.length}` : ''}
+          </button>
           <button className={tab === 'cluster' ? 'active' : ''} onClick={() => setTab('cluster')}>连拍组</button>
           <button className={tab === 'similar' ? 'active' : ''} onClick={() => setTab('similar')}>相似图片</button>
           <button className={tab === 'triage' ? 'active' : ''} onClick={() => setTab('triage')}>整理</button>
@@ -896,7 +947,8 @@ export default function App() {
             全选 {HK.all} · 删除 {HK.del} · 对比 {HK.compare}<br/>
             全选删除 {HK.delAll} · 标签 {HK.tag}<br/>
             选非最佳 {HK.best} · Finder {HK.finder}<br/>
-            清空 {HK.clear} · 堆栈 {HK.stack} · 撤销 Z
+            清空 {HK.clear} · 堆栈 {HK.stack} · 撤销 Z<br/>
+            选片 Y · 等级 1/2/3/4 (A/B/C/D)
           </div>
         </aside>
 
@@ -913,6 +965,10 @@ export default function App() {
             </div>
           ) : tab === 'grid' ? (
             <Grid shots={shots} selected={selected} setSelected={setSelected} onOpen={openDetail} />
+          ) : tab === 'pick' ? (
+            pickShots.length === 0
+              ? <div className="empty">在网格里多选照片后按 Y(或点「选片」)进入选片</div>
+              : <PickView shots={pickShots} selected={selected} setSelected={setSelected} onOpen={openDetail} onGrade={onGrade} />
           ) : (
             <Clusters shots={shots} selected={selected} setSelected={setSelected} onOpen={openDetail} />
           )}

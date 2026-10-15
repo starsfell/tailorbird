@@ -1,5 +1,6 @@
 import React from 'react'
 import { api } from './api.js'
+import { gradeOf } from './grades.js'
 
 const REFINE_TAG = '精修'
 const KEEP_TAG = '保留'
@@ -9,8 +10,9 @@ function Stars({ n }) {
   return <span className="stars">{'★'.repeat(n)}{'☆'.repeat(3 - n)}</span>
 }
 
-export function Tile({ shot, selected, onToggle, onOpen, showTags = false, highlighted = false }) {
+export function Tile({ shot, selected, onToggle, onOpen, showTags = false, highlighted = false, className, largeSrc, imgStyle, onThumbLoad, children }) {
   const cls = ['tile']
+  if (className) cls.push(className)
   if (selected) cls.push('selected')
   if (shot.is_cluster_best) cls.push('best')
   if (shot.pick) cls.push('pick')
@@ -24,6 +26,7 @@ export function Tile({ shot, selected, onToggle, onOpen, showTags = false, highl
   const conf = shot.bird_confidence
   const isRefined = (shot.tags || []).some(t => t.name === REFINE_TAG)
   const isKept = (shot.tags || []).some(t => t.name === KEEP_TAG)
+  const grade = gradeOf(shot)
   return (
     <div
       id={`tile-${shot.primary_id}`}
@@ -32,7 +35,13 @@ export function Tile({ shot, selected, onToggle, onOpen, showTags = false, highl
       onDoubleClick={(e) => { e.stopPropagation(); onOpen && onOpen(shot) }}
       title={`${shot.stem}  ${shot.formats.join('+')}  sharp ${sharpLabel}${eyeLabel ? '  eye ' + eyeLabel : ''}${aesLabel ? '  aes ' + aesLabel : ''}`}
     >
-      <img src={api.thumbUrl(shot.primary_id)} loading="lazy" alt="" />
+      <img src={api.thumbUrl(shot.primary_id)} loading="lazy" alt="" style={imgStyle} draggable={false}
+        onLoad={onThumbLoad} />
+      {/* 大格子:缩略图先顶着,中等预览加载完再盖上去 */}
+      {largeSrc && (
+        <img className="tile-large" src={largeSrc} loading="lazy" alt="" style={imgStyle} draggable={false}
+          onLoad={e => e.currentTarget.classList.add('loaded')} />
+      )}
       <div className="tile-tl">
         <Stars n={shot.rating} />
         {shot.pick && <span className="badge pick-flag">PICK</span>}
@@ -52,8 +61,9 @@ export function Tile({ shot, selected, onToggle, onOpen, showTags = false, highl
           {aesLabel && <span className="badge aes" title="TOPIQ 美学">{aesLabel}</span>}
         </span>
       </div>
-      {(isRefined || isKept || (conf != null && conf > 0)) && (
+      {(grade || isRefined || isKept || (conf != null && conf > 0)) && (
         <div className="tile-tr">
+          {grade && <span className="badge tag-grade" style={{ background: grade.color }} title={grade.tag}>{grade.key}</span>}
           {isRefined && <span className="badge tag-refine" title="已标「精修」">精修</span>}
           {isKept && <span className="badge tag-keep" title="已标「保留」">保留</span>}
           {conf != null && conf > 0 && (
@@ -69,6 +79,7 @@ export function Tile({ shot, selected, onToggle, onOpen, showTags = false, highl
           {shot.tags.length > 4 && <span className="tile-tag more">+{shot.tags.length - 4}</span>}
         </div>
       )}
+      {children}
     </div>
   )
 }
