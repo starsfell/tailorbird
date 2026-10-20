@@ -52,6 +52,18 @@ def _load_raw_preview(path: Path) -> Image.Image:
     raise RuntimeError(f"could not extract preview from {path}")
 
 
+def preview_orientation(path: Path, exif_orientation) -> int:
+    """Rotation still needed on what load_preview returns. pillow-heif already
+    applies the HEIF container's rotation, so HEIF previews come out upright;
+    RAW embedded JPEGs and plain JPEGs (Image.open) do not."""
+    if path.suffix.lower() in HEIF_EXTS:
+        return 1
+    try:
+        return int(exif_orientation or 1)
+    except (TypeError, ValueError):
+        return 1
+
+
 def make_thumbnail(img: Image.Image, size: int) -> Image.Image:
     img = img.copy()
     img.thumbnail((size, size), Image.Resampling.LANCZOS)

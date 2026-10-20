@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from './api.js'
 import { Tile } from './Tile.jsx'
-import { buildTagTree, tagPath } from './tagTree.js'
+import { buildTagTree, tagPath, tagNameMatches } from './tagTree.js'
 
 // Triage view: a tag-first workspace for fast inbox-style processing.
 //   • Left panel: tag tree. Top 9 favorites get keyboard shortcuts 1-9.
@@ -53,10 +53,9 @@ function TagTreeRow({
 
 function prune(roots, term) {
   if (!term) return roots
-  const lower = term.toLowerCase()
   const visit = (n) => {
     const kept = n.children.map(visit).filter(Boolean)
-    if (n.name.toLowerCase().includes(lower) || kept.length > 0) return { ...n, children: kept }
+    if (tagNameMatches(n.name, term) || kept.length > 0) return { ...n, children: kept }
     return null
   }
   return roots.map(visit).filter(Boolean)

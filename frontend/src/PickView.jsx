@@ -54,12 +54,12 @@ function zoomStyle(shot, aspect, zoom, pan) {
 
 // 选片页:网格多选后按 Y 进来,只看这一批;大格子看姿态/构图,打 A/B/C/D 等级。
 // 选中状态复用 App 的 selected,所以底栏的精修/保留/移走/对比照常可用。
-export function PickView({ shots, selected, setSelected, onOpen, onGrade }) {
+export function PickView({ shots, selected, setSelected, onOpen, onGrade, rejectedIds, onReject }) {
   const [size, setSize] = useState(() => {
     try { return clampSize(Number(localStorage.getItem('pickTileSize')) || 320) } catch { return 320 }
   })
   useEffect(() => { try { localStorage.setItem('pickTileSize', String(size)) } catch {} }, [size])
-  const [gradeFilter, setGradeFilter] = useState('all')   // 'all' | 'none' | 'A'…'D'
+  const [gradeFilter, setGradeFilter] = useState('all')   // 'all' | 'none' | 'A'…'D' | 'rejected'
   const [zoom, setZoom] = useState(() => {
     try { return clampZoom(Number(localStorage.getItem('pickZoom')) || 1) } catch { return 1 }
   })
@@ -73,17 +73,25 @@ export function PickView({ shots, selected, setSelected, onOpen, onGrade }) {
     (a.stem || '').localeCompare(b.stem || '', undefined, { numeric: true })
   ), [shots])
 
+  // 「未选中」的不进全部/等级视图,只在「未选中」里能看到并恢复
+  const rejected = useMemo(() => sorted.filter(s => rejectedIds?.has(s.primary_id)), [sorted, rejectedIds])
+  const kept = useMemo(() => sorted.filter(s => !rejectedIds?.has(s.primary_id)), [sorted, rejectedIds])
+
   const counts = useMemo(() => {
     const c = { none: 0 }
     for (const g of GRADES) c[g.key] = 0
-    for (const s of sorted) { const g = gradeOf(s); c[g ? g.key : 'none']++ }
+    for (const s of kept) { const g = gradeOf(s); c[g ? g.key : 'none']++ }
     return c
-  }, [sorted])
+  }, [kept])
+
+  // 「未选中」看空了就回到全部
+  useEffect(() => { if (gradeFilter === 'rejected' && rejected.length === 0) setGradeFilter('all') }, [gradeFilter, rejected.length])
 
   const visible = useMemo(() => {
-    if (gradeFilter === 'all') return sorted
-    return sorted.filter(s => (gradeOf(s)?.key ?? 'none') === gradeFilter)
-  }, [sorted, gradeFilter])
+    if (gradeFilter === 'rejected') return rejected
+    if (gradeFilter === 'all') return kept
+    return kept.filter(s => (gradeOf(s)?.key ?? 'none') === gradeFilter)
+  }, [kept, rejected, gradeFilter])
 
   // 缩放快捷键:- / = 缩小放大格子
   useEffect(() => {
@@ -175,9 +183,9 @@ export function PickView({ shots, selected, setSelected, onOpen, onGrade }) {
   return (
     <div className="pick-view">
       <div className="grid-sort-bar chips pick-bar">
-        <span style={{color:'var(--muted)', fontSize:11}}>选片 {shots.length} 张 · 等级:</span>
+        <span style={{color:'var(--muted)', fontSize:11}}>选片 {kept.length} 张 · 等级:</span>
         <button className={'chip' + (gradeFilter === 'all' ? ' active' : '')} onClick={() => setGradeFilter('all')}>
-          全部 {sorted.length}
+          全部 {kept.length}
         </button>
         <button className={'chip' + (gradeFilter === 'none' ? ' active' : '')} onClick={() => setGradeFilter('none')}>
           未评 {counts.none}
@@ -193,6 +201,15 @@ export function PickView({ shots, selected, setSelected, onOpen, onGrade }) {
             {g.label} {counts[g.key]}
           </button>
         ))}
+        {rejected.length > 0 && (
+          <button
+            className={'chip' + (gradeFilter === 'rejected' ? ' active' : '')}
+            onClick={() => setGradeFilter('rejected')}
+            title="标为未选中的照片:只是不在选片里显示,没有删除,可以恢复"
+          >
+            未选中 {rejected.length}
+          </button>
+        )}
         <span className="pick-size" style={{marginLeft:'auto'}} title="联动放大:对准鸟眼(没有则鸟身/中心);⌘+滚轮 或 [ ] 调,放大后可拖动">
           <span style={{color:'var(--muted)', fontSize:11}}>放大</span>
           <input
@@ -217,10 +234,10 @@ export function PickView({ shots, selected, setSelected, onOpen, onGrade }) {
         </span>
       </div>
       <div style={{fontSize:11, color:'var(--muted)', margin:'0 0 10px'}}>
-        单击选 · Shift 范围选 · 双击/Space 看大图 · 1/2/3/4 给选中打 A/B/C/D(再按一次取消)· 0 清除等级 · −/= 格子大小 · [ ] 或 ⌘+滚轮 联动放大(放大后可拖动)· \ 还原 · Y 回网格
+        单击选 · Shift 范围选 · 双击/Space 看大图 · 1/2/3/4 给选中打 A/B/C/D(再按一次取消)· 0 清除等级 · X 未选中(从选片里藏起来,不删)· −/= 格子大小 · [ ] 或 ⌘+滚轮 联动放大(放大后可拖动)· \ 还原 · Y 回网格
       </div>
       {visible.length === 0 ? (
-        <div className="empty">这个等级下没有照片</div>
+        <div className="empty">{gradeFilter === 'all' && rejected.length > 0 ? '这批都标成未选中了' : '这个等级下没有照片'}</div>
       ) : (
         <div
           ref={gridRef}
@@ -230,6 +247,7 @@ export function PickView({ shots, selected, setSelected, onOpen, onGrade }) {
         >
           {visible.map(s => {
             const grade = gradeOf(s)
+            const isRejected = rejectedIds?.has(s.primary_id)
             return (
               <Tile
                 key={s.primary_id}
@@ -258,6 +276,12 @@ export function PickView({ shots, selected, setSelected, onOpen, onGrade }) {
                       >{g.key}</button>
                     )
                   })}
+                  <button
+                    className="grade-dot reject-dot"
+                    style={{ '--grade': isRejected ? '#4fe1c4' : '#8a8f98' }}
+                    onClick={() => onReject?.([s.primary_id], !isRejected)}
+                    title={isRejected ? '恢复到选片 (X)' : '未选中:从选片里藏起来,不删除 (X)'}
+                  >{isRejected ? '↺' : '✕'}</button>
                 </div>
               </Tile>
             )

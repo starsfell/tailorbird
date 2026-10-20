@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Tile } from './Tile.jsx'
 
 const SORT_MODES = [
@@ -23,7 +23,7 @@ function sortShots(arr, sortMode) {
   return arr
 }
 
-export function Grid({ shots, selected, setSelected, onOpen }) {
+export function Grid({ shots, selected, setSelected, onOpen, focusIds }) {
   // Order within each cluster: by capture time then filename (default), or by score asc/desc.
   const [sortMode, setSortMode] = useState('time')
 
@@ -68,14 +68,23 @@ export function Grid({ shots, selected, setSelected, onOpen }) {
     return flatShots.filter(sh => (sh.stem || '').toLowerCase().includes(s))
   }
 
-  const highlightShot = (shot) => {
+  const highlightShot = (shot, behavior = 'smooth') => {
     if (!shot) return
     const el = document.getElementById(`tile-${shot.primary_id}`)
-    el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    el?.scrollIntoView({ behavior, block: 'center' })
     setHighlightId(shot.primary_id)
     if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current)
     highlightTimerRef.current = setTimeout(() => setHighlightId(null), 1400)
   }
+
+  // 从选片页回来:直接跳到这一批里排在最后的那张,不用再从头翻
+  useEffect(() => {
+    if (!focusIds?.size) return
+    const last = [...flatShots].reverse().find(s => focusIds.has(s.primary_id))
+    if (!last) return
+    const raf = requestAnimationFrame(() => highlightShot(last, 'auto'))
+    return () => cancelAnimationFrame(raf)
+  }, [focusIds])
 
   const handleQueryChange = (val) => {
     setQuery(val)

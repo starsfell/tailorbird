@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from './api.js'
-import { buildTagTree, descendantIds, tagPath } from './tagTree.js'
+import { buildTagTree, descendantIds, tagPath, tagNameMatches } from './tagTree.js'
 import { TagPickerDialog } from './TagPickerDialog.jsx'
 import { TagExportDialog } from './TagExportDialog.jsx'
 import { IconEdit, IconPlus, IconFolder, IconBox, IconTrash } from './Icons.jsx'
@@ -193,10 +193,9 @@ function TagTreeRow({
 // Prune the tree to only nodes matching `term` or having a descendant that does.
 function pruneTree(roots, term) {
   if (!term) return roots
-  const lower = term.toLowerCase()
   const visit = (n) => {
     const kept = n.children.map(visit).filter(Boolean)
-    const selfMatch = n.name.toLowerCase().includes(lower)
+    const selfMatch = tagNameMatches(n.name, term)
     if (selfMatch || kept.length > 0) return { ...n, children: kept }
     return null
   }
@@ -319,6 +318,7 @@ export function TagFilterPanel({
   negate, setNegate,
   onTagsChanged,
   countsByTag,
+  folderTagIds,
   viewCount,
   onSelectAllInView,
   statusFilter, setStatusFilter, statusCounts,
@@ -395,7 +395,24 @@ export function TagFilterPanel({
   const isSection = (n) => SECTION_TAG_NAMES.includes(n.name)
   const sectionRoots = pruned.filter(n => isSection(n))
   const favRoots = pruned.filter(n => isFav(n) && !isPinned(n) && !isSection(n))
-  const nonFavRoots = pruned.filter(n => !isFav(n) && !isPinned(n) && !isSection(n))
+  // 「自定义」平时只列当前文件夹打过的(加上正在筛选的);搜索时才翻全部历史标签
+  const nonFavRoots = useMemo(() => {
+    const roots = pruned.filter(n => !isFav(n) && !isPinned(n) && !isSection(n))
+    if (q.trim() || !folderTagIds) return roots
+    const visit = (n) => {
+      const kept = n.children.map(visit).filter(Boolean)
+      if (folderTagIds.has(n.id) || tagFilter.has(n.id) || kept.length > 0) return { ...n, children: kept }
+      return null
+    }
+    return roots.map(visit).filter(Boolean)
+  }, [pruned, q, folderTagIds, tagFilter])
+  const hiddenCustomCount = useMemo(() => {
+    if (q.trim() || !folderTagIds) return 0
+    const count = (n) => 1 + n.children.reduce((a, c) => a + count(c), 0)
+    const total = pruned.filter(n => !isFav(n) && !isPinned(n) && !isSection(n)).reduce((a, n) => a + count(n), 0)
+    const shown = nonFavRoots.reduce((a, n) => a + count(n), 0)
+    return total - shown
+  }, [pruned, nonFavRoots, q, folderTagIds])
 
   // 置顶标签:按 PINNED_TAGS 的顺序取真实标签(存在才显示)。
   const pinnedNodes = PINNED_TAGS
@@ -438,7 +455,7 @@ export function TagFilterPanel({
         <button onClick={() => setExpanded(false)} title="收起">›</button>
       </div>
       <div className="panel-body">
-        <input className="panel-search" placeholder="搜索…" value={q}
+        <input className="panel-search" placeholder="搜索标签(中文/拼音)…" value={q}
           onChange={(e) => setQ(e.target.value)} />
         <div className="panel-mode">
           <button className={filterMode === 'or' ? 'active' : ''} onClick={() => setFilterMode('or')} title="任一命中">任一</button>
@@ -531,7 +548,7 @@ export function TagFilterPanel({
             {(!groupCollapsed.has('常用') || q.trim()) && renderTree(favRoots)}
           </>
         )}
-        {nonFavRoots.length > 0 && (
+        {(nonFavRoots.length > 0 || hiddenCustomCount > 0) && (
           <>
             <div className="section-title clickable" onClick={() => toggleGroupCollapsed('自定义')}>
               <span style={{ display: 'inline-block', width: 10, color: 'var(--muted)' }}>
@@ -540,6 +557,11 @@ export function TagFilterPanel({
               自定义
             </div>
             {(!groupCollapsed.has('自定义') || q.trim()) && renderTree(nonFavRoots)}
+            {!groupCollapsed.has('自定义') && hiddenCustomCount > 0 && (
+              <div style={{color:'var(--muted)', fontSize:11, padding:'4px 0 4px 18px'}}>
+                另有 {hiddenCustomCount} 个历史标签本文件夹没用到 · 在上方搜索(中文/拼音)可找到
+              </div>
+            )}
           </>
         )}
         {pruned.length === 0 && (

@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from './api.js'
+import { tagNameMatches } from './tagTree.js'
 
 const PRESET_COLORS = [
   '#f0576a', '#ffab4f', '#ffd970', '#4fe1c4', '#5f82ff', '#a983ff', '#ff7aa8',
@@ -63,8 +64,10 @@ export function TagQuickBar({ shots, allTags, countsByTag, onApplied, onClose })
   const quickPicks = useMemo(() => {
     const used = new Set(attachedById.keys())
     // Only show 'all-applied' tags as removable chips; partial and unused both as quick add.
+    // 输入框有字时在全部历史标签里搜(中文 / 拼音全拼 / 首字母)
     const pool = (allTags || []).filter(t =>
-      !autoTagIds.has(t.id) && (!used.has(t.id) || (counts.get(t.id) || 0) < total)
+      !autoTagIds.has(t.id) && (!used.has(t.id) || (counts.get(t.id) || 0) < total) &&
+      tagNameMatches(t.name, text)
     )
     pool.sort((a, b) => {
       const fa = a.is_favorite ? 1 : 0
@@ -77,7 +80,7 @@ export function TagQuickBar({ shots, allTags, countsByTag, onApplied, onClose })
       return (a.name || '').localeCompare(b.name || '')
     })
     return pool.slice(0, 14)
-  }, [allTags, attachedById, counts, total, autoTagIds, countsByTag])
+  }, [allTags, attachedById, counts, total, autoTagIds, countsByTag, text])
 
   const targetIds = () => list.map(s => s.primary_id)
 
@@ -94,6 +97,18 @@ export function TagQuickBar({ shots, allTags, countsByTag, onApplied, onClose })
   const removeOne = (t) => runApply(() =>
     api.batchPhotoTags(targetIds(), { remove_tag_ids: [t.id] })
   )
+  // 回车:同名标签或搜到的第一个历史标签直接加上;都没有才新建(按钮始终是新建)
+  const submitText = async () => {
+    const name = text.trim()
+    if (!name) return
+    const exact = (allTags || []).some(t => t.name === name)
+    if (!exact && quickPicks.length > 0) {
+      await addExisting(quickPicks[0])
+      setText('')
+      return
+    }
+    await createAndApply()
+  }
   const createAndApply = async () => {
     const name = text.trim()
     if (!name) return
@@ -161,11 +176,11 @@ export function TagQuickBar({ shots, allTags, countsByTag, onApplied, onClose })
         <input
           ref={inputRef}
           type="text"
-          placeholder="新建/搜索标签 (回车创建)"
+          placeholder="搜索标签(中文/拼音)· 回车添加第一个,没有就新建"
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === 'Enter') { e.preventDefault(); createAndApply() }
+            if (e.key === 'Enter') { e.preventDefault(); submitText() }
             else if (e.key === 'Escape') { e.preventDefault(); onClose() }
           }}
         />

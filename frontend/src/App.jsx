@@ -91,7 +91,28 @@ export default function App() {
   const [detail, setDetail] = useState(null)
   const [compare, setCompare] = useState(null)
   const [pickIds, setPickIds] = useState(new Set())   // 选片页这一批(网格多选后按 Y 带进来)
-  useEffect(() => { setPickIds(new Set()) }, [folder])
+  // 从选片页回到网格时,网格滚到这一批的最后一张(网格切走会卸载,滚动位置会丢)
+  const [gridFocusIds, setGridFocusIds] = useState(null)
+  const prevTabRef = useRef(tab)
+  useEffect(() => {
+    if (prevTabRef.current === 'pick' && tab === 'grid' && pickIds.size > 0) setGridFocusIds(new Set(pickIds))
+    prevTabRef.current = tab
+  }, [tab])
+  // 选片页里标为「未选中」的:只是从选片里藏起来,不删、不打标签;换一批/换文件夹就清空
+  const [pickRejected, setPickRejected] = useState(new Set())
+  useEffect(() => { setPickIds(new Set()); setPickRejected(new Set()) }, [folder])
+  const onRejectPick = (ids, rejected) => {
+    setPickRejected(prev => {
+      const next = new Set(prev)
+      for (const id of ids) rejected ? next.add(id) : next.delete(id)
+      return next
+    })
+    setSelected(prev => {
+      const next = new Set(prev)
+      for (const id of ids) next.delete(id)
+      return next
+    })
+  }
   const [similarTick, setSimilarTick] = useState(0)   // bump to force SimilarView re-fetch
   const [tagDialogIds, setTagDialogIds] = useState(null)  // Set<id> | null
   const [stackDialogOpen, setStackDialogOpen] = useState(false)
@@ -208,13 +229,20 @@ export default function App() {
 
   const pickShots = useMemo(() => shots.filter(s => pickIds.has(s.primary_id)), [shots, pickIds])
   // 快捷键里的全选/选非最佳/全选删除/Space 只作用于当前页面能看到的那批
-  const viewShots = tab === 'pick' ? pickShots : shots
+  const pickKeptShots = useMemo(() => pickShots.filter(s => !pickRejected.has(s.primary_id)), [pickShots, pickRejected])
+  const viewShots = tab === 'pick' ? pickKeptShots : shots
 
   const countsByTag = useMemo(() => {
     const m = new Map()
     for (const s of shots) for (const t of (s.tags || [])) m.set(t.id, (m.get(t.id) || 0) + 1)
     return m
   }, [shots])
+  // 当前文件夹里打过的标签(不受标签筛选影响),侧栏「自定义」只列这些
+  const folderTagIds = useMemo(() => {
+    const ids = new Set()
+    for (const s of shotsBeforeTagFilter) for (const t of (s.tags || [])) ids.add(t.id)
+    return ids
+  }, [shotsBeforeTagFilter])
 
   // 选中的照片是否「全部」已带某标签 → 决定按钮是"取消"(实心)还是"添加"(空心)。
   const [allSelectedRefined, allSelectedKept] = useMemo(() => {
@@ -481,6 +509,7 @@ export default function App() {
     if (tab === 'pick') { setTab('grid'); return }
     if (selected.size > 0) {
       setPickIds(new Set(selected))
+      setPickRejected(new Set())
       setSelected(new Set())
     }
     setTab('pick')
@@ -556,6 +585,13 @@ export default function App() {
         // 选中的全都已是这个等级 → 再按一次取消
         const allHave = g && ids.every(id => (viewShots.find(s => s.primary_id === id)?.tags || []).some(t => t.name === g.tag))
         onGrade(ids, g && !allHave ? g.key : null)
+        return
+      }
+      if (tab === 'pick' && k === 'x' && !e.metaKey && !e.ctrlKey) {   // 选中的标为未选中(已是未选中则恢复)
+        if (selected.size === 0) return
+        e.preventDefault()
+        const ids = Array.from(selected)
+        onRejectPick(ids, !ids.every(id => pickRejected.has(id)))
         return
       }
       if (k === 'a' || k === 'o') { e.preventDefault(); setSelected(new Set(viewShots.map(s => s.primary_id))) }   // 全选
@@ -710,7 +746,7 @@ export default function App() {
         <div className="tabs">
           <button className={tab === 'grid' ? 'active' : ''} onClick={() => setTab('grid')}>网格</button>
           <button className={tab === 'pick' ? 'active' : ''} onClick={openPick} title="网格多选后按 Y 进入选片(大格子看姿态/构图,打 A/B/C/D)">
-            选片{pickIds.size > 0 ? ` ${pickShots.length}` : ''}
+            选片{pickIds.size > 0 ? ` ${pickKeptShots.length}` : ''}
           </button>
           <button className={tab === 'cluster' ? 'active' : ''} onClick={() => setTab('cluster')}>连拍组</button>
           <button className={tab === 'similar' ? 'active' : ''} onClick={() => setTab('similar')}>相似图片</button>
@@ -963,7 +999,7 @@ export default function App() {
             全选删除 {HK.delAll} · 标签 {HK.tag}<br/>
             选非最佳 {HK.best} · Finder {HK.finder}<br/>
             清空 {HK.clear} · 堆栈 {HK.stack} · 撤销 Z<br/>
-            选片 Y · 等级 1/2/3/4 (A/B/C/D)
+            选片 Y · 等级 1/2/3/4 (A/B/C/D) · 未选中 X
           </div>
         </aside>
 
@@ -979,11 +1015,12 @@ export default function App() {
                 : folder ? '没有照片。点击扫描开始。' : '请输入照片目录路径并扫描。'}
             </div>
           ) : tab === 'grid' ? (
-            <Grid shots={shots} selected={selected} setSelected={setSelected} onOpen={openDetail} />
+            <Grid shots={shots} selected={selected} setSelected={setSelected} onOpen={openDetail} focusIds={gridFocusIds} />
           ) : tab === 'pick' ? (
             pickShots.length === 0
               ? <div className="empty">在网格里多选照片后按 Y(或点「选片」)进入选片</div>
-              : <PickView shots={pickShots} selected={selected} setSelected={setSelected} onOpen={openDetail} onGrade={onGrade} />
+              : <PickView shots={pickShots} selected={selected} setSelected={setSelected} onOpen={openDetail} onGrade={onGrade}
+                  rejectedIds={pickRejected} onReject={onRejectPick} />
           ) : (
             <Clusters shots={shots} selected={selected} setSelected={setSelected} onOpen={openDetail} />
           )}
@@ -1007,6 +1044,7 @@ export default function App() {
             setNegate={setTagFilterNegate}
             onTagsChanged={() => setTagsTick(t => t + 1)}
             countsByTag={countsByTag}
+            folderTagIds={folderTagIds}
             viewCount={shots.length}
             onSelectAllInView={() => setSelected(new Set(shots.map(s => s.primary_id)))}
             statusFilter={statusFilter}

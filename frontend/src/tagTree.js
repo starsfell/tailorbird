@@ -1,4 +1,5 @@
 // Utility helpers for treating the flat tag list as a tree.
+import { pinyin } from 'pinyin-pro'
 
 export function buildTagTree(tags) {
   const byId = new Map(tags.map(t => [t.id, { ...t, children: [] }]))
@@ -47,4 +48,27 @@ export function descendantIds(byId, id) {
     }
   }
   return out
+}
+
+// 标签名搜索:中文子串,或拼音全拼 / 首字母(「hfbh」「heifu」都能找到「黑腹滨鹬」)。
+// 拼音按标签名缓存,树每次过滤都会把所有标签扫一遍。
+const pinyinCache = new Map()
+function pinyinKeys(name) {
+  let k = pinyinCache.get(name)
+  if (!k) {
+    const syl = pinyin(name, { toneType: 'none', type: 'array', v: true }).map(s => s.toLowerCase())
+    k = { full: syl.join(''), initials: syl.map(s => s[0] || '').join('') }
+    pinyinCache.set(name, k)
+  }
+  return k
+}
+
+export function tagNameMatches(name, query) {
+  const q = (query || '').trim().toLowerCase().replace(/\s+/g, '')
+  if (!q) return true
+  const n = (name || '').toLowerCase()
+  if (n.replace(/\s+/g, '').includes(q)) return true
+  if (!/^[a-z]+$/.test(q)) return false
+  const { full, initials } = pinyinKeys(name || '')
+  return full.includes(q) || initials.includes(q)
 }

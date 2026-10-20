@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import threading
+from functools import lru_cache
 from dataclasses import asdict
 from pathlib import Path
 from typing import Optional
@@ -11,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
+from app.core import orient
 from app.core.decode import load_preview
 
 
@@ -41,6 +43,36 @@ app.add_middleware(
 def _startup() -> None:
     init_db()
     _recluster_after_shot_key_migration()
+    threading.Thread(target=_backfill_orientation, daemon=True).start()
+
+
+def _backfill_orientation() -> None:
+    """Photos scanned before the orientation column existed: read just the
+    Orientation tag (one exiftool call per chunk) so portraits render upright
+    without a rescan. Files not on disk right now stay NULL and retry next start."""
+    import json as _json
+    import subprocess
+    from app.core.decode import preview_orientation
+    from app.core.exif import EXIFTOOL_BIN
+    with tx() as conn:
+        rows = conn.execute(
+            "SELECT id, path FROM photos WHERE orientation IS NULL AND deleted_at IS NULL"
+        ).fetchall()
+    todo = [(r["id"], r["path"]) for r in rows if Path(r["path"]).exists()]
+    for i in range(0, len(todo), 200):
+        chunk = todo[i:i + 200]
+        try:
+            res = subprocess.run(
+                [EXIFTOOL_BIN, "-j", "-n", "-fast2", "-Orientation", *[p for _, p in chunk]],
+                capture_output=True, text=True, timeout=300,
+            )
+            by_path = {d.get("SourceFile"): d.get("Orientation") for d in _json.loads(res.stdout or "[]")}
+        except Exception:
+            continue
+        with tx() as conn:
+            for pid, path in chunk:
+                conn.execute("UPDATE photos SET orientation=? WHERE id=?",
+                             (preview_orientation(Path(path), by_path.get(path)), pid))
 
 
 def _recluster_after_shot_key_migration() -> None:
@@ -236,8 +268,8 @@ def similar_groups(folder: Optional[str] = None, threshold: int = 16) -> dict:
                 "eye_sharpness": s["eye_sharp"],
                 "aesthetic_score": s["aes"],
                 "bird_confidence": s["conf"],
-                "bird_bbox": _maybe_json(s.get("bird_bbox")),
-                "eye_xy": _maybe_json(s.get("eye_xy")),
+                "bird_bbox": orient.map_bbox(_maybe_json(s.get("bird_bbox")), s.get("orientation")),
+                "eye_xy": orient.map_point(_maybe_json(s.get("eye_xy")), s.get("orientation")),
                 "rating": s["rating"],
                 "pick": bool(s["pick"]),
                 "is_flying": bool(s["is_flying"]),
@@ -393,6 +425,7 @@ def list_shots(
             MAX(bird_confidence) AS bird_confidence,
             MAX(bird_bbox) AS bird_bbox,
             MAX(eye_xy) AS eye_xy,
+            MAX(orientation) AS orientation,
             MAX(rating) AS rating,
             MAX(pick) AS pick,
             MAX(is_flying) AS is_flying,
@@ -500,8 +533,8 @@ def list_shots(
                     "eye_sharpness": d["eye_sharpness"],
                     "aesthetic_score": d["aesthetic_score"],
                     "bird_confidence": d["bird_confidence"],
-                    "bird_bbox": _maybe_json(d["bird_bbox"]),
-                    "eye_xy": _maybe_json(d["eye_xy"]),
+                    "bird_bbox": orient.map_bbox(_maybe_json(d["bird_bbox"]), d["orientation"]),
+                    "eye_xy": orient.map_point(_maybe_json(d["eye_xy"]), d["orientation"]),
                     "rating": d["rating"],
                     "pick": bool(d["pick"]),
                     "is_flying": bool(d["is_flying"]),
@@ -558,13 +591,26 @@ def _pick_render_row(conn, photo_id: int, columns: str) -> dict | None:
 @app.get("/api/thumb/{photo_id}")
 def get_thumb(photo_id: int):
     with tx() as conn:
-        row = _pick_render_row(conn, photo_id, "thumb_path")
+        row = _pick_render_row(conn, photo_id, "thumb_path, orientation")
     if not row or not row["thumb_path"]:
         raise HTTPException(404, "thumbnail missing")
     p = Path(row["thumb_path"])
     if not p.exists():
         raise HTTPException(404, "thumbnail file missing on disk")
-    return FileResponse(p, media_type="image/webp")
+    o = orient.norm(row["orientation"])
+    if o == 1:
+        return FileResponse(p, media_type="image/webp")
+    return StreamingResponse(io.BytesIO(_rotated_thumb(str(p), o)), media_type="image/webp",
+                             headers={"Cache-Control": "public, max-age=86400"})
+
+
+@lru_cache(maxsize=4000)
+def _rotated_thumb(path: str, o: int) -> bytes:
+    from PIL import Image
+    buf = io.BytesIO()
+    with Image.open(path) as im:
+        orient.rotate_image(im, o).save(buf, "WEBP", quality=82)
+    return buf.getvalue()
 
 
 @app.get("/api/photo/{photo_id}/detail")
@@ -577,7 +623,7 @@ def get_photo_detail(photo_id: int) -> dict:
                       eye_visibility, focus_point, focus_weight, is_flying,
                       is_over, is_under, rating, pick,
                       iso, f_number, exposure_time, focal_length, lens_model, camera_model,
-                      cluster_id, is_cluster_best, user_mark, error
+                      cluster_id, is_cluster_best, user_mark, error, orientation
                FROM photos WHERE id=?""",
             (photo_id,),
         ).fetchone()
@@ -589,6 +635,17 @@ def get_photo_detail(photo_id: int) -> dict:
         if d.get(k):
             try: d[k] = json.loads(d[k])
             except Exception: pass
+    # Render orientation comes from the sibling actually displayed (see _pick_render_row)
+    with tx() as conn:
+        rr = _pick_render_row(conn, photo_id, "orientation")
+    o = orient.norm(rr["orientation"] if rr else d.get("orientation"))
+    if isinstance(d.get("focus_point"), dict):
+        d["focus_point"] = orient.map_focus(d["focus_point"], o, (d.get("width"), d.get("height")))
+    d["bird_bbox"] = orient.map_bbox(d.get("bird_bbox"), o)
+    d["eye_xy"] = orient.map_point(d.get("eye_xy"), o)
+    if orient.swaps_axes(o):
+        d["width"], d["height"] = d.get("height"), d.get("width")
+    d["orientation"] = o
     return d
 
 
@@ -597,11 +654,12 @@ def get_full(photo_id: int, max_side: int = 2400):
     """Return a JPEG preview. Uses the cached medium preview when available
     (avoiding RAW decode entirely); otherwise decodes on demand."""
     with tx() as conn:
-        row = _pick_render_row(conn, photo_id, "path, medium_path")
+        row = _pick_render_row(conn, photo_id, "path, medium_path, orientation")
     if not row:
         raise HTTPException(404, "photo not found")
+    o = orient.norm(row["orientation"])
 
-    if row["medium_path"]:
+    if row["medium_path"] and o == 1:
         mp = Path(row["medium_path"])
         if mp.exists():
             return FileResponse(mp, media_type="image/jpeg",
@@ -617,6 +675,7 @@ def get_full(photo_id: int, max_side: int = 2400):
     if max(img.size) > max_side:
         scale = max_side / max(img.size)
         img = img.resize((int(img.size[0] * scale), int(img.size[1] * scale)))
+    img = orient.rotate_image(img, o)
     buf = io.BytesIO()
     img.convert("RGB").save(buf, "JPEG", quality=88)
     buf.seek(0)
@@ -1280,13 +1339,17 @@ def annotate(req: AnnotateReq) -> dict:
     if bx + bw > 1.001 or by + bh > 1.001:
         raise HTTPException(400, "bird_bbox extends outside image")
 
+    # The UI draws on the upright image of the rendered sibling; analysis is
+    # stored in that sibling's sensor frame (same file the AI pipeline uses).
     with tx() as conn:
-        row = conn.execute(
-            "SELECT id, path, stem, shot_key, focus_point FROM photos WHERE id=?",
-            (req.photo_id,),
-        ).fetchone()
+        row = _pick_render_row(conn, req.photo_id, "path, stem, folder_id, focus_point, orientation")
     if not row:
         raise HTTPException(404, "photo not found")
+    o = row["orientation"]
+    req.bird_bbox = [min(1.0, max(0.0, v)) for v in orient.unmap_bbox(req.bird_bbox, o)]
+    bx, by, bw, bh = req.bird_bbox
+    if req.eye_xy and len(req.eye_xy) == 2:
+        req.eye_xy = orient.unmap_point(req.eye_xy, o)
     p = Path(row["path"])
     if not p.exists():
         raise HTTPException(404, "file missing")

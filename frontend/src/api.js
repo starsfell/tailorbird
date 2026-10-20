@@ -89,8 +89,9 @@ export const api = {
     const qs = new URLSearchParams({ folder, threshold })
     return req('/api/similar-groups?' + qs.toString())
   },
-  thumbUrl: (id) => `/api/thumb/${id}`,
-  fullUrl: (id, maxSide = 3600) => `/api/full/${id}?max_side=${maxSide}`,
+  // r=1:竖拍转正之后的版本号,让浏览器丢掉之前缓存的横图
+  thumbUrl: (id) => `/api/thumb/${id}?r=1`,
+  fullUrl: (id, maxSide = 3600) => `/api/full/${id}?max_side=${maxSide}&r=1`,
   // ----- tags -----
   listTags: () => req('/api/tags'),
   createTag: (name, opts = {}) =>

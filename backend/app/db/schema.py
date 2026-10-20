@@ -125,6 +125,7 @@ def init_db() -> None:
             ("focal_length", "REAL"),         # in mm
             ("lens_model", "TEXT"),
             ("camera_model", "TEXT"),
+            ("orientation", "INTEGER"),    # EXIF Orientation still to apply to the decoded preview
         ]
         for col, typ in migrations:
             if col not in cols:

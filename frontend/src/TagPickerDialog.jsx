@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react'
-import { buildTagTree, tagPath } from './tagTree.js'
+import { buildTagTree, tagPath, tagNameMatches } from './tagTree.js'
 
 function PickerRow({ node, depth, byId, excludeIds, expandedIds, toggleExpand, onPick, searchTerm }) {
   const has = node.children.length > 0
@@ -38,10 +38,9 @@ function PickerRow({ node, depth, byId, excludeIds, expandedIds, toggleExpand, o
 
 function prune(roots, term) {
   if (!term) return roots
-  const lower = term.toLowerCase()
   const visit = (n) => {
     const kept = n.children.map(visit).filter(Boolean)
-    if (n.name.toLowerCase().includes(lower) || kept.length > 0) return { ...n, children: kept }
+    if (tagNameMatches(n.name, term) || kept.length > 0) return { ...n, children: kept }
     return null
   }
   return roots.map(visit).filter(Boolean)

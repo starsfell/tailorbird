@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from './api.js'
 import { Grid } from './Grid.jsx'
-import { buildTagTree, descendantIds, tagPath } from './tagTree.js'
+import { buildTagTree, descendantIds, tagPath, tagNameMatches } from './tagTree.js'
 import { TagPickerDialog } from './TagPickerDialog.jsx'
 import { TagExportDialog } from './TagExportDialog.jsx'
 import { IconEdit, IconPlus, IconFolder, IconBox, IconTrash } from './Icons.jsx'
@@ -150,10 +150,9 @@ function TreeRow({ node, depth, byId, expandedIds, toggleExpand, selectedIds, on
 
 function prune(roots, term) {
   if (!term) return roots
-  const lower = term.toLowerCase()
   const visit = (n) => {
     const kept = n.children.map(visit).filter(Boolean)
-    if (n.name.toLowerCase().includes(lower) || kept.length > 0) return { ...n, children: kept }
+    if (tagNameMatches(n.name, term) || kept.length > 0) return { ...n, children: kept }
     return null
   }
   return roots.map(visit).filter(Boolean)

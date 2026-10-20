@@ -17,7 +17,7 @@ from app.config import (
     THUMB_SIZE,
     THUMBS_DIR,
 )
-from app.core.decode import load_preview, make_thumbnail, to_grayscale_array
+from app.core.decode import load_preview, make_thumbnail, preview_orientation, to_grayscale_array
 from app.core.exif import parse_focus_point, parse_shot_at, read_exif
 from app.core.hashing import compute_phash, hamming
 from app.core.rating import RatingInput, compute_rating
@@ -136,6 +136,7 @@ def _analyze_one(path: Path) -> dict:
         "focus_point": None,
         "iso": None, "f_number": None, "exposure_time": None,
         "focal_length": None, "lens_model": None, "camera_model": None,
+        "orientation": None,
         "analyzed_at": time.time(),
         "error": None,
         "keywords": [],
@@ -164,6 +165,7 @@ def _analyze_one(path: Path) -> dict:
             "subject_sharpness": sharp,
             "phash": phash,
             "focus_point": json.dumps(focus) if focus else None,
+            "orientation": preview_orientation(path, exif.get("Orientation")),
             **basic,
         })
         return base
@@ -179,11 +181,11 @@ def _upsert_photo(folder_id: int, rec: dict) -> None:
             INSERT INTO photos(folder_id, path, stem, ext, size, mtime, shot_at, width, height,
                               thumb_path, subject_sharpness, phash, focus_point,
                               iso, f_number, exposure_time, focal_length, lens_model, camera_model,
-                              analyzed_at, error)
+                              orientation, analyzed_at, error)
             VALUES(:folder_id, :path, :stem, :ext, :size, :mtime, :shot_at, :width, :height,
                    :thumb_path, :subject_sharpness, :phash, :focus_point,
                    :iso, :f_number, :exposure_time, :focal_length, :lens_model, :camera_model,
-                   :analyzed_at, :error)
+                   :orientation, :analyzed_at, :error)
             ON CONFLICT(path) DO UPDATE SET
                 size=excluded.size, mtime=excluded.mtime, shot_at=excluded.shot_at,
                 width=excluded.width, height=excluded.height, thumb_path=excluded.thumb_path,
@@ -192,7 +194,7 @@ def _upsert_photo(folder_id: int, rec: dict) -> None:
                 iso=excluded.iso, f_number=excluded.f_number,
                 exposure_time=excluded.exposure_time, focal_length=excluded.focal_length,
                 lens_model=excluded.lens_model, camera_model=excluded.camera_model,
-                analyzed_at=excluded.analyzed_at, error=excluded.error
+                orientation=excluded.orientation, analyzed_at=excluded.analyzed_at, error=excluded.error
             """,
             {**rec, "folder_id": folder_id},
         )

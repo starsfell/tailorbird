@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from './api.js'
-import { buildTagTree, tagPath } from './tagTree.js'
+import { buildTagTree, tagPath, tagNameMatches } from './tagTree.js'
 
 // Dialog for applying tags to a multi-selected set of shots, rendered as a tree.
 // Each tag has tri-state w.r.t. its direct attachment count across the selection:
@@ -54,10 +54,9 @@ function TreeRow({ node, depth, byId, expandedIds, toggleExpand, counts, total, 
 
 function prune(roots, term) {
   if (!term) return roots
-  const lower = term.toLowerCase()
   const visit = (n) => {
     const kept = n.children.map(visit).filter(Boolean)
-    if (n.name.toLowerCase().includes(lower) || kept.length > 0) return { ...n, children: kept }
+    if (tagNameMatches(n.name, term) || kept.length > 0) return { ...n, children: kept }
     return null
   }
   return roots.map(visit).filter(Boolean)
