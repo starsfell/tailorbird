@@ -58,6 +58,25 @@ def _register_folder(folder: Path) -> int:
         return row["id"]
 
 
+def _adopt_nested_photos(folder_id: int, folder: Path) -> int:
+    """Move rows that live under `folder` but were registered to another
+    folder (e.g. a sub-folder scanned on its own earlier) into this folder.
+
+    photos.path is UNIQUE, so without this the parent scan's upsert hits the
+    existing row and leaves its folder_id pointing at the old sub-folder —
+    those photos then never show up in the parent folder. Re-parenting keeps
+    all prior analysis / AI / tags / marks, so they also aren't re-analyzed.
+    Uses substr instead of LIKE because folder names contain '_' / '%'."""
+    prefix = str(folder).rstrip("/") + "/"
+    with tx() as conn:
+        cur = conn.execute(
+            "UPDATE photos SET folder_id=? "
+            "WHERE folder_id != ? AND substr(path, 1, ?) = ?",
+            (folder_id, folder_id, len(prefix), prefix),
+        )
+        return cur.rowcount or 0
+
+
 def _existing_paths(folder_id: int) -> dict[str, dict]:
     with tx() as conn:
         rows = conn.execute(
@@ -527,6 +546,7 @@ def scan_folder(
         on_update(progress)
 
     folder_id = _register_folder(folder)
+    _adopt_nested_photos(folder_id, folder)
     if discovered is None:
         discovered = discover_files(folder)
     existing = _existing_paths(folder_id)
