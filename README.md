@@ -272,6 +272,10 @@ cd frontend && npm run dev                                     # 终端 2
 
 **首页导入时可以关掉 AI 分析**——"选择文件夹"/"选择文件"下面有个勾选框,不勾就跳过鸟类识别/眼部关键点/美学评分/飞鸟判断这套模型推理,只做预览图 + EXIF 抽取,一次拍几万张时能快很多。之后想看评分/眼部锐度,回到该任务点顶部「重跑 AI」按钮补算即可;工作区顶栏的"扫描+AI" / "快速扫描"两个按钮对已扫过的目录做的是同一件事。
 
+**扫描完成后显示当前目录的照片**——从首页新建文件夹或文件扫描任务时,完成后加载刚选的目录;若扫描期间切到另一个已扫描目录,完成时保留当前浏览位置。切换目录后,旧目录的慢请求不会覆盖当前网格。
+
+**目录批量管理**——首页「最近的挑片任务」和工作区左侧「已扫描目录」右边均有「多选」按钮。进入后可逐项勾选或全选,批量「标记已完成」「改为待捡图」或「删除目录信息」。删除前会确认目录名单;仅移除数据库中的目录、照片记录、标签关联、撤销历史及缩略图缓存,原始照片和 XMP 文件保留。部分操作失败时,失败项保持选中,可再次重试。扫描期间暂停目录批量管理,仍可正常切换目录浏览照片。
+
 ### tailorbird.app 是怎么打包的
 
 不是 Tauri/Electron,是 PyInstaller 冻结后端 + 手写的 macOS bundle 壳:
@@ -292,6 +296,8 @@ conda run -n tailorbird pyinstaller packaging/tailorbird.spec \
 ```
 
 日常改代码调试**不要**走这个流程——太慢。用 `scripts/start.sh`(前后端分离热更新)或 `scripts/start_prod.sh`(单端口跑源码,前端有变化会自动重 build,但后端不会冻结打包)。只有正式要更新 Dock 里那个 `.app` 时才跑上面四步。
+
+**部署约定**:「小部署」包含以上四步、启动本地 App 验证、更新文档/TODO/memory,以及 Git commit + push。「大部署」在此基础上再制作新版 DMG、发布 GitHub Release、更新安装说明,并同步 birdfoilo 网站的下载链接、版本和功能说明。
 
 ---
 
@@ -528,6 +534,8 @@ sqlite3 data/tailorbird.db "SELECT rating, COUNT(*) FROM photos WHERE deleted_at
 
 **数据库迁移**:`schema.py` 的 `init_db()` 在启动时自动 `ALTER TABLE` 加新列。旧数据库兼容,无需手动迁移。
 
+**目录流程回归测试**:先启动 Vite,然后运行 `node scripts/test_folder_workflow.mjs`。测试使用 Puppeteer 和模拟 API,不连接真实照片库;默认测试地址为 `http://127.0.0.1:5186`,可通过 `TEST_URL` 指定。需要可用的 Puppeteer 安装(通过 `PUPPETEER_MODULE` 指定模块路径)及浏览器(可通过 `CHROME_PATH` 指定)。覆盖扫描后的目录一致性、后台浏览、旧请求晚到,以及首页/侧栏的批量完成、取消删除、部分失败重试和清空目录记录。
+
 **清除 AI 结果重算**:删 `data/tailorbird.db` 重新扫描即可。缩略图缓存 `data/thumbs/` 可保留(scanner 会自动跳过已存在的)。
 
 ---
@@ -550,6 +558,13 @@ sqlite3 data/tailorbird.db "SELECT rating, COUNT(*) FROM photos WHERE deleted_at
 ---
 
 ## 仍未做 / Roadmap
+
+本轮完成(2026-11-16):
+
+- [x] 修复新目录扫描完成后加载旧目录照片,并防止晚到请求覆盖当前目录
+- [x] 首页/已扫描目录支持多选,批量完成、恢复待捡图和删除目录信息
+
+后续待办:
 
 - [ ] 鸟种识别(11000+ 种):SuperPicky 模型加密用不了,需另寻方案
 - [ ] 自动按星级整理到 `0star / 1star / 2star / 3star` 子文件夹

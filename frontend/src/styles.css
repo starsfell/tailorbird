@@ -329,6 +329,35 @@ input:focus { border-color: var(--accent); }
 .home-task:hover .home-task-del { opacity: 0.7; }
 .home-task-del:hover { opacity: 1; color: var(--danger, #e85a5a); }
 
+/* 目录多选:沿用现有卡片、主题色和紧凑按钮。 */
+.folder-manager { margin-bottom: 12px; }
+.folder-manager-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.folder-manager-heading h2, .folder-manager-heading h3 { margin: 0; }
+.folder-select-toggle { font-size: 12px; padding: 4px 9px; white-space: nowrap; }
+.folder-select-toggle[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.folder-selection-toolbar {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 10px;
+  margin-top: 10px; padding: 10px;
+  background: var(--bg-elev); border: 1px solid var(--border); border-radius: 6px;
+}
+.folder-select-all { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; white-space: nowrap; }
+.folder-selection-count { color: var(--muted); font-size: 12px; white-space: nowrap; }
+.folder-batch-buttons { display: flex; flex-wrap: wrap; gap: 6px; margin-left: auto; }
+.folder-batch-buttons button { padding: 4px 8px; font-size: 12px; }
+.folder-delete-action { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, var(--border)); }
+.folder-delete-action:hover { background: color-mix(in srgb, var(--danger) 12%, transparent); }
+.folder-manager.compact .folder-selection-toolbar { gap: 8px; padding: 8px; background: var(--bg); }
+.folder-manager.compact .folder-batch-buttons { width: 100%; margin-left: 0; }
+.folder-checkbox { position: absolute; top: 8px; left: 6px; }
+.folder-select-all input, .folder-checkbox, .home-task-checkbox { accent-color: var(--accent); cursor: pointer; }
+.home-task.selected { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--bg-elev)); }
+.home-task-checkbox { flex-shrink: 0; margin: 2px 0 0; }
+.home-task-name { flex: 1; }
+.home-task-state { font-size: 11px; color: var(--muted); margin-top: 6px; }
+.home-task-state.done, .folder-completed { color: var(--success); }
+.folder-completed { font-size: 10px; }
+button:focus-visible, .home-task:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
 .topbar .status {
   color: var(--muted);
   font-size: 12px;

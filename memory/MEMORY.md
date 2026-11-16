@@ -1,0 +1,7 @@
+- [Deploy must update the .app too](feedback_deploy_app_too.md) — "小部署" = full 4-step packaging flow + git commit + push to origin, not just start_prod.sh.
+- [tailorbird's two deploy modes](project_tailorbird_deploy_modes.md) — packaged .app vs source-mode server on 7891, don't auto-sync, check which is running before deploying.
+- [tailorbird 127.0.0.1 vs localhost cache bug](project_tailorbird_localhost_cache_bug.md) — REVERTED at user request; diagnosis still useful, but don't re-apply the fix unasked.
+- [Full revert means redeploy too](feedback_full_revert_means_deploy_too.md) — "还原回今天开始的样子" = revert source AND redeploy the .app, not just the repo.
+- [Project Chinese name: 捡鸟儿](user_pref_project_chinese_name.md) — call tailorbird/birdye "捡鸟儿" in Chinese chat; don't rename code/files.
+- [Reply in Chinese](feedback_reply_in_chinese.md) — all user-facing replies in Chinese, including summaries after long tool runs.
+- [扫描目录与批量管理](project_folder_workflow.md) — 扫描完成刷新当前目录、丢弃晚到旧请求;首页和侧栏支持目录多选及批量完成/删除记录。部署状态见正文。

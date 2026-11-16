@@ -14,6 +14,7 @@ import { StackDialog } from './StackDialog.jsx'
 import { HomeView } from './HomeView.jsx'
 import { PickView } from './PickView.jsx'
 import { GRADES } from './grades.js'
+import { FolderSelectionToolbar, useFolderSelection } from './FolderSelection.jsx'
 
 const REFINE_TAG = '精修'   // 批量打"精修"标签 / 移动到「精修」子文件夹用的固定标签名
 const KEEP_TAG = '保留'     // 批量打"保留"标签用的固定标签名
@@ -88,6 +89,8 @@ export default function App() {
   const [subfolderName, setSubfolderName] = useState('ToReview')
   const [preset, setPreset] = useState('intermediate')
   const [folders, setFolders] = useState([])
+  const [folderActionBusy, setFolderActionBusy] = useState(false)
+  const folderSelection = useFolderSelection(folders)
   const [detail, setDetail] = useState(null)
   const [compare, setCompare] = useState(null)
   const [pickIds, setPickIds] = useState(new Set())   // 选片页这一批(网格多选后按 Y 带进来)
@@ -129,12 +132,18 @@ export default function App() {
     try {
       const { folders } = await api.listFolders()
       setFolders(folders || [])
-      if (!folder && folders?.length) setFolder(folders[0].path)
+      setFolder(current => current || folders?.[0]?.path || '')
     } catch (e) { console.error(e) }
-  }, [folder])
+  }, [])
 
+  const shotsRequestRef = useRef(0)
   const refreshShots = useCallback(async () => {
-    if (!folder) return
+    if (folderRef.current !== folder) return
+    const request = ++shotsRequestRef.current
+    if (!folder) {
+      setShots([]); setShotsBeforeTagFilter([]); setTotal(0); setStatusCounts({})
+      return
+    }
     // 只有当前正在看"正在被扫描的那个目录"时才清空网格只显示进度;
     // 扫描其它目录时不影响这里的浏览/删除/打标签。
     if (scanningFolderRef.current && scanningFolderRef.current === folder) {
@@ -142,6 +151,8 @@ export default function App() {
     }
     try {
       const r = await api.listShots({ folder, min_sharpness: filter.min_sharpness, only_cluster_best: filter.only_cluster_best, sort_by: sortBy, sort_order: sortOrder, limit: 5000, include_deleted: false })
+      // 切目录/筛选后,晚到的旧请求不能覆盖当前网格。
+      if (request !== shotsRequestRef.current || folderRef.current !== folder) return
       let items = r.items
       // 子集视图: 只保留刚用"选文件"扫描的那几张(按 stem 匹配)
       if (subsetStems.size > 0) items = items.filter(s => subsetStems.has(s.stem))
@@ -207,6 +218,8 @@ export default function App() {
       setTotal(datasetTotal)
     } catch (e) { console.error(e) }
   }, [folder, filter, category, tagFilter, tagFilterMode, tagFilterNegate, statusFilter, sortBy, sortOrder, subsetStems])
+  const refreshShotsRef = useRef(refreshShots)
+  useEffect(() => { refreshShotsRef.current = refreshShots }, [refreshShots])
 
   useEffect(() => { refreshFolders() }, [refreshFolders])
   useEffect(() => { refreshShots() }, [refreshShots])
@@ -300,14 +313,14 @@ export default function App() {
     scanningFolderRef.current = null
     setBusy(false)
     // 扫描完成时用户可能已经切到别的目录看;只有还在看这个目录才需要刷新它。
-    if (folderRef.current === target) await refreshShots()
+    if (folderRef.current === target) await refreshShotsRef.current()
     await refreshFolders()
   }
 
-  const onScanFiles = async (runAi = true, filesArg = null) => {
+  const onScanFiles = async (runAi = true, filesArg = null, folderArg = null) => {
     const files = filesArg ?? pickedFiles
     if (!files.length) return
-    const target = folder
+    const target = folderArg ?? folder
     beginFreshScan(target)
     setBusy(true)
     try { await api.startScanFiles(files, runAi) }
@@ -333,7 +346,7 @@ export default function App() {
     }
     // 失败/取消: 保留已选以便重试
     setBusy(false)
-    if (stillHere) await refreshShots()
+    if (stillHere) await refreshShotsRef.current()
     await refreshFolders()
   }
 
@@ -355,10 +368,39 @@ export default function App() {
     setPickedFiles(r.files)
     if (r.folder) setFolder(r.folder)
     setView('workspace')
-    await onScanFiles(runAi, r.files)
+    await onScanFiles(runAi, r.files, r.folder)
   }
 
   const onOpenTask = (path) => { setFolder(path); setPickedFiles([]); setSubsetStems(new Set()); setView('workspace') }
+
+  const onManageFolders = async (ids, action) => {
+    if (!ids.length || busy || folderActionBusy) return []
+    const targets = folders.filter(f => ids.includes(f.id))
+    if (action === 'delete' && !window.confirm(
+      `删除 ${targets.length} 个目录的信息?\n${targets.map(f => '· ' + f.path.replace(/^.*\//, '')).join('\n')}\n\n将移除照片记录、标签关联、撤销历史和缩略图缓存。磁盘上的原始照片和 XMP 文件保留。`
+    )) return []
+    setFolderActionBusy(true)
+    try {
+      const results = await Promise.allSettled(targets.map(f => action === 'delete'
+        ? api.deleteFolder(f.id)
+        : api.setFolderComplete(f.id, action === 'complete')))
+      const succeeded = targets.filter((_, i) => results[i].status === 'fulfilled')
+      if (action === 'delete') {
+        if (succeeded.some(f => f.path === folderRef.current)) {
+          setFolder(''); setSelected(new Set()); setSubsetStems(new Set())
+          setPickedFiles([]); setDetail(null); setCompare(null)
+        }
+        setTagsTick(t => t + 1)
+        await refreshUndoHistory()
+      }
+      await refreshFolders()
+      if (action === 'delete') await refreshShotsRef.current()
+      const failures = targets.flatMap((f, i) => results[i].status === 'rejected'
+        ? [`${f.path.replace(/^.*\//, '')}: ${results[i].reason.message}`] : [])
+      if (failures.length) alert(`已处理 ${succeeded.length} 个目录,${failures.length} 个失败:\n${failures.join('\n')}`)
+      return succeeded.map(f => f.id)
+    } finally { setFolderActionBusy(false) }
+  }
 
   const onCancelScan = async () => {
     try { await api.cancelScan() } catch (e) { /* 扫描可能刚好结束,忽略 */ }
@@ -567,6 +609,7 @@ export default function App() {
 
   useEffect(() => {
     const onKey = (e) => {
+      if (view === 'home') return
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return
       if (detail || compare) return
       if (tagDialogIds) {
@@ -626,7 +669,7 @@ export default function App() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [shots, selected, detail, compare, tagDialogIds, stackDialogOpen, tab, viewShots, allTags])
+  }, [view, shots, selected, detail, compare, tagDialogIds, stackDialogOpen, tab, viewShots, allTags])
 
   const statusText = [
     scanStatus
@@ -690,11 +733,11 @@ export default function App() {
       <HomeView
         folders={folders}
         busy={busy}
+        managingFolders={folderActionBusy}
         onPickFolder={onHomePickFolder}
         onPickFiles={onHomePickFiles}
         onOpenTask={onOpenTask}
-        onDeleteFolder={async (id) => { await api.deleteFolder(id); await refreshFolders() }}
-        onToggleFolderComplete={async (id, completed) => { await api.setFolderComplete(id, completed); await refreshFolders() }}
+        onManageFolders={onManageFolders}
       />
     )
   }
@@ -729,19 +772,19 @@ export default function App() {
         )}
         {pickedFiles.length > 0 ? (
           <>
-            <button className="primary" onClick={() => onScanFiles(true)} disabled={busy}>{busy ? '处理中…' : `扫描选中 ${pickedFiles.length} 张+AI`}</button>
-            <button onClick={() => onScanFiles(false)} disabled={busy} title="只抽预览/EXIF,跳过 AI">快速扫描选中</button>
+            <button className="primary" onClick={() => onScanFiles(true)} disabled={busy || folderActionBusy}>{busy ? '处理中…' : `扫描选中 ${pickedFiles.length} 张+AI`}</button>
+            <button onClick={() => onScanFiles(false)} disabled={busy || folderActionBusy} title="只抽预览/EXIF,跳过 AI">快速扫描选中</button>
           </>
         ) : (
           <>
-            <button className="primary" onClick={() => onScan(true)} disabled={busy || !folder.trim()}>{busy ? '处理中…' : '扫描+AI'}</button>
-            <button onClick={() => onScan(false)} disabled={busy || !folder.trim()} title="只抽预览/EXIF,跳过 AI(适合非鸟摄,快很多)">快速扫描</button>
+            <button className="primary" onClick={() => onScan(true)} disabled={busy || folderActionBusy || !folder.trim()}>{busy ? '处理中…' : '扫描+AI'}</button>
+            <button onClick={() => onScan(false)} disabled={busy || folderActionBusy || !folder.trim()} title="只抽预览/EXIF,跳过 AI(适合非鸟摄,快很多)">快速扫描</button>
           </>
         )}
         {busy && (
           <button className="danger" onClick={onCancelScan} title="停止当前扫描(已分析的照片会保留)">停止</button>
         )}
-        <button onClick={onRerunAi} disabled={busy || !folder} title="只重跑 AI,不重新扫描">重跑 AI</button>
+        <button onClick={onRerunAi} disabled={busy || folderActionBusy || !folder} title="只重跑 AI,不重新扫描">重跑 AI</button>
         <div className="status">{statusText}</div>
         <div className="tabs">
           <button className={tab === 'grid' ? 'active' : ''} onClick={() => setTab('grid')}>网格</button>
@@ -788,36 +831,40 @@ export default function App() {
           />
         ) : (<>
         <aside className="sidebar">
-          <h3>已扫描目录</h3>
+          <FolderSelectionToolbar title="已扫描目录" folders={folders} selection={folderSelection}
+            disabled={busy || folderActionBusy} onManage={onManageFolders} compact />
           {folders.length === 0 && <div style={{color:'var(--muted)', fontSize:12}}>暂无</div>}
           {folders.map(f => (
             <div key={f.id} className="folder-row" style={{
               padding:'6px 8px', borderRadius:6, marginBottom:4,
-              background: f.path === folder ? '#1f2228' : 'transparent',
+              background: folderSelection.selecting && folderSelection.ids.has(f.id)
+                ? 'color-mix(in srgb, var(--accent) 12%, transparent)'
+                : f.path === folder ? 'var(--hover)' : 'transparent',
               cursor:'pointer', fontSize:12, wordBreak:'break-all',
               position:'relative',
-            }} onClick={() => { setFolder(f.path); setSubsetStems(new Set()) }} title={f.path}>
+            }} onClick={() => {
+              if (folderSelection.selecting) { if (!busy && !folderActionBusy) folderSelection.toggle(f.id); return }
+              setFolder(f.path); setSubsetStems(new Set())
+            }} title={f.path}>
+              {folderSelection.selecting && <input type="checkbox" className="folder-checkbox"
+                aria-label={`选择目录 ${f.path.replace(/^.*\//, '')}`} checked={folderSelection.ids.has(f.id)}
+                disabled={busy || folderActionBusy} onClick={e => e.stopPropagation()}
+                onChange={() => folderSelection.toggle(f.id)} />}
+              {!folderSelection.selecting && (
               <button
                 className="folder-del"
                 title="从 tailorbird 移除(不删磁盘文件)"
-                onClick={async (e) => {
+                disabled={busy || folderActionBusy}
+                onClick={(e) => {
                   e.stopPropagation()
-                  const name = f.path.replace(/^.*\//, '')
-                  const ok = window.confirm(
-                    `从 tailorbird 移除目录「${name}」?\n· 数据库里 ${f.photo_count} 张照片记录会清掉\n· 磁盘原文件不动`
-                  )
-                  if (!ok) return
-                  try {
-                    await api.deleteFolder(f.id)
-                    if (folder === f.path) setFolder('')
-                    await refreshFolders()
-                    await refreshShots()
-                  } catch (err) { alert('删除失败: ' + err.message) }
+                  onManageFolders([f.id], 'delete')
                 }}
               >×</button>
-              <div style={{paddingRight: 18}}>
+              )}
+              <div style={{paddingRight: 18, marginLeft: folderSelection.selecting ? 24 : 0}}>
                 {f.path.replace(/^.*\//, '')}
                 <div style={{color:'var(--muted)', fontSize:11}}>{f.alive_count}/{f.photo_count} 文件</div>
+                {f.completed_at && <span className="folder-completed">已完成</span>}
               </div>
             </div>
           ))}
